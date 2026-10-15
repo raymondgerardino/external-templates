@@ -1,0 +1,2008 @@
+<!DOCTYPE html>
+<!---->
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Fitness Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<style>
+
+/* ════════════════════════════════════════════════════════════════
+   DESIGN TOKENS
+   All colours, radii and font are defined here as CSS variables.
+   applyTheme() overrides --accent, --accent-soft, --accent-mid,
+   --bg and --header-bg at runtime from the Cogniss app theme.
+   ════════════════════════════════════════════════════════════════ */
+:root {
+  /* Brand — overridden by applyTheme() */
+  --accent:       #3b6ef5;
+  --accent-soft:  #eff3ff;   /* 10% accent tint — used for soft backgrounds */
+  --accent-mid:   #c7d4fd;   /* 30% accent tint — used for dim bars, chip hover */
+
+  /* Page */
+  --bg:           #f2f4f8;   /* overridden by app's light colour */
+  --card:         #ffffff;
+
+  /* Text */
+  --ink:          #111318;   /* primary text */
+  --ink-2:        #374151;   /* secondary text */
+  --muted:        #6b7280;   /* captions, placeholders */
+
+  /* Chrome */
+  --hair:         #e5e7eb;   /* borders, separators */
+  --accent-fg:    #ffffff;   /* contrast-aware text on accent fills — updated by applyContrastColor() */
+  --header-fg:    #111318;   /* contrast-aware colour for header icons — updated by applyContrastColor() */
+  --green:        #16a34a;
+  --red:          #dc2626;
+
+  /* Typography */
+  --font:         'Inter', sans-serif;
+
+  /* Radii */
+  --r-card:       18px;
+  --r-sm:         12px;
+  --r-pill:       999px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   RESET & BASE
+   ════════════════════════════════════════════════════════════════ */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html {
+  /* Prevents iOS from auto-scaling text on orientation change */
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: 80px;
+  /* Prevents background from showing if user over-scrolls on iOS */
+  overscroll-behavior-y: none;
+  /* Prevent text selection / copy on mobile */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   LOADING SCREEN
+   Shown until init() completes. Fades out via .hidden class.
+   ════════════════════════════════════════════════════════════════ */
+#loadingScreen {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  transition: opacity 0.3s;
+}
+#loadingScreen.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--hair);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   HEADER
+   Sticky at top. Background set by --header-bg (from app theme).
+   Large top padding accommodates iOS status bar / notch.
+   ════════════════════════════════════════════════════════════════ */
+.header {
+  background: var(--header-bg, #fff);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 60px 20px 14px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--hair);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+}
+/* Back button — sends QUIT to Cogniss, marking activity complete */
+.back-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--header-fg);
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MAIN SCROLL AREA
+   ════════════════════════════════════════════════════════════════ */
+.scroll {
+  padding: 28px 16px 0;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GREETING
+   Time-based greeting + user name + motivational sub-line.
+   updateMotiv() picks the sub-line based on goal completion state.
+   ════════════════════════════════════════════════════════════════ */
+.greeting {
+  padding: 0 0 28px;
+}
+.greeting-sub {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+.greeting-name {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.7px;
+  line-height: 1.15;
+}
+.greeting-motiv {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   SECTION LABELS & CARDS
+   ════════════════════════════════════════════════════════════════ */
+.section-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-2);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+  padding: 0 2px;
+}
+.card {
+  background: var(--card);
+  border-radius: var(--r-card);
+  border: 1px solid var(--hair);
+  padding: 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   HERO ROW (Steps / Calories)
+   Shared layout: large number on the left, donut ring on the right.
+   Used by both Steps card and Calories card.
+   ════════════════════════════════════════════════════════════════ */
+.steps-hero-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 0 24px;
+}
+.steps-hero-text {
+  flex: 1;
+  min-width: 0; /* prevents text from overflowing flex container */
+}
+/* Small accent label above the big number e.g. "TODAY'S STEPS" */
+.steps-today-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #000000;
+  margin-bottom: 8px;
+}
+/* The big number e.g. "4,010" */
+.steps-hero-main {
+  font-size: 44px;
+  font-weight: 900;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -1.5px;
+}
+/* The goal portion e.g. "/ 8,000" in muted smaller text */
+/* "kcal" unit inline with the goal — smaller, sits naturally after the number */
+.cal-kcal-unit {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+.steps-hero-goal {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: -0.3px;
+}
+/* Meta line e.g. "3,990 steps to goal  Yesterday: 4,675 ↓ 14% down" */
+.steps-hero-meta {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-top: 12px;
+  line-height: 1.6;
+}
+.steps-hero-meta strong {
+  color: var(--ink-2);
+  font-weight: 700;
+}
+/* "Set Goal" / "Set Target" pill button */
+.set-goal-btn {
+  margin-top: 18px;
+  display: inline-flex;
+  align-items: center;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 700;
+  border: none;
+  border-radius: var(--r-pill);
+  padding: 10px 22px;
+  letter-spacing: 0.1px;
+  -webkit-tap-highlight-color: transparent;
+}
+.set-goal-btn:active {
+  opacity: 0.85;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   DONUT RING
+   SVG circle with stroke-dashoffset animation.
+   Circumference = 2 * PI * r = 2 * PI * 58 ≈ 364.
+   animateDonut() sets stroke-dashoffset = circ * (1 - pct).
+   Both donuts share the same .donut-wrap class.
+   ════════════════════════════════════════════════════════════════ */
+.donut-wrap {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  flex-shrink: 0;
+}
+/* Rotate so arc starts at 12 o'clock */
+.donut-wrap svg {
+  transform: rotate(-90deg);
+}
+/* Percentage label centred inside the ring */
+.donut-pct {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+/* ════════════════════════════════════════════════════════════════
+   BAR CHART
+   7-day step chart. Bars animate in with scaleY on first render.
+   barsAnimated flag prevents re-animation on goal changes.
+   Max Y is max(stepGoal, highestDay, 1) so the goal always fits.
+   ════════════════════════════════════════════════════════════════ */
+.chart-outer {
+  position: relative;
+  height: 148px;
+  margin-bottom: 10px;
+}
+.chart-bars {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 40px; /* room for x-axis labels */
+  top: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+.bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+.bar-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.bar {
+  width: 100%;
+  max-width: 32px;
+  border-radius: 6px 6px 3px 3px;
+  transform: scaleY(0);
+  transform-origin: bottom;
+  transition: transform 0.5s cubic-bezier(0.34, 1.2, 0.64, 1);
+}
+/* Bars at/above goal: full accent colour */
+.bar.accent { background: var(--accent); }
+/* Bars below goal: dimmed accent tint */
+.bar.dim    { background: var(--accent-mid); opacity: 0.5; }
+
+/* X-axis: day abbreviation + step count */
+.chart-xlabels {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  display: flex;
+  gap: 4px;
+}
+.bar-xlabel { flex: 1; text-align: center; }
+.bar-xlabel .day {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  display: block;
+}
+.bar-xlabel .val {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  display: block;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   STATS ROW (Weekly Avg / Best Day / Weekly Total)
+   ════════════════════════════════════════════════════════════════ */
+.stats-row {
+  display: flex;
+  background: #f9fafb;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hair);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.stat-box {
+  flex: 1;
+  padding: 16px 8px;
+  text-align: center;
+  border-right: 1px solid var(--hair);
+}
+.stat-box:last-child { border-right: none; }
+.stat-val {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+}
+.stat-lbl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   CALORIES SPLIT (Active / Basal)
+   ════════════════════════════════════════════════════════════════ */
+.cal-split { display: flex; gap: 12px; }
+.cal-split-item {
+  flex: 1;
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hair);
+}
+.cal-split-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-2);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.cal-split-val {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.6px;
+}
+.cal-split-unit {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-left: 3px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   WORKOUTS LIST
+   Reads w.activityName and w.calories from WORKOUT HealthKit records.
+   EMOJI map matches common workout type names to emoji glyphs.
+   ════════════════════════════════════════════════════════════════ */
+.workouts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 24px 0 14px;
+}
+.workouts-title { font-size: 16px; font-weight: 700; color: var(--ink); }
+.workouts-count { font-size: 14px; font-weight: 500; color: var(--muted); }
+.workout-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-top: 1px solid var(--hair);
+}
+/* Icon background uses accent-soft — picks up app primary colour automatically */
+.workout-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 24px;
+}
+.workout-name { font-size: 16px; font-weight: 600; color: var(--ink); }
+.workout-time-meta { font-size: 13px; color: var(--muted); margin-top: 3px; }
+.workout-dur {
+  margin-left: auto;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   EMPTY STATE
+   Shown when neither steps nor calories data has been synced.
+   Hidden by renderAll() once any data arrives.
+   ════════════════════════════════════════════════════════════════ */
+#emptyState {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  padding: 72px 28px;
+  text-align: center;
+}
+.empty-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--ink);
+  margin-bottom: 10px;
+  letter-spacing: -0.4px;
+}
+.empty-sub {
+  font-size: 15px;
+  color: var(--muted);
+  line-height: 1.6;
+  max-width: 270px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GOAL / TARGET BOTTOM SHEET
+   Shared between "Set Goal" (steps) and "Set Target" (calories).
+   sheetMode variable ('goal' | 'target') controls which is active.
+   openSheet() configures the sheet; commitSheet() saves via savePrefs().
+   ════════════════════════════════════════════════════════════════ */
+/* Dark frosted overlay behind the sheet */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 19, 24, 0.3);
+  backdrop-filter: blur(4px);
+  z-index: 20;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.scrim.open { opacity: 1; pointer-events: all; }
+
+.sheet {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: #fff;
+  border-radius: 24px 24px 0 0;
+  padding: 14px 24px 48px;
+  z-index: 21;
+  transform: translateY(110%);
+  transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+  box-shadow: 0 -4px 32px rgba(0, 0, 0, 0.12);
+}
+.sheet.open { transform: translateY(0); }
+
+.grabber {
+  width: 40px;
+  height: 4px;
+  background: var(--hair);
+  border-radius: var(--r-pill);
+  margin: 0 auto 22px;
+}
+.sheet-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.sheet-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sheet-subtitle {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-top: 4px;
+  letter-spacing: -0.3px;
+}
+.close-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 1px solid var(--hair);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-2);
+  -webkit-tap-highlight-color: transparent;
+}
+.close-btn:active { opacity: 0.7; }
+
+/* Large draft number displayed while adjusting slider */
+.draft-val {
+  font-size: 56px;
+  font-weight: 900;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  line-height: 1;
+  margin: 22px 0;
+  letter-spacing: -2px;
+}
+.draft-unit { font-size: 18px; font-weight: 500; color: var(--muted); }
+
+/* Range slider — custom styled */
+.slider-wrap { margin: 10px 0 6px; }
+input[type=range] {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: var(--r-pill);
+  outline: none;
+  /* Background set dynamically by updateSlider() to show fill */
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2.5px solid var(--accent);
+  box-shadow: 0 2px 8px rgba(59, 110, 245, 0.3);
+}
+.slider-minmax {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Quick value chips */
+.chips { display: flex; gap: 10px; margin: 20px 0; flex-wrap: wrap; }
+.chip {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid var(--hair);
+  background: transparent;
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  -webkit-tap-highlight-color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.chip:active { opacity: 0.7; }
+.chip.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+/* Primary CTA button in the sheet */
+.primary-btn {
+  width: 100%;
+  padding: 18px;
+  border-radius: var(--r-pill);
+  border: none;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-family: var(--font);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+  margin-top: 8px;
+  -webkit-tap-highlight-color: transparent;
+}
+.primary-btn:active { opacity: 0.85; }
+
+
+/* ════════════════════════════════════════════════════════════════
+   PULL TO REFRESH
+   The indicator slides down from above the scroll area.
+   Arrow rotates as the user pulls; spinner shows during refresh.
+   ════════════════════════════════════════════════════════════════ */
+.ptr-bar {
+  overflow: hidden;
+  height: 0;
+  transition: height 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ptr-bar.visible { height: 52px; }
+
+.ptr-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s;
+  color: var(--muted);
+}
+.ptr-spin {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--hair);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.ptr-spin.active { display: block; }
+
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════
+     LOADING SCREEN
+     Visible until init() completes and hides it.
+     ════════════════════════════════════════════════════════════════ -->
+<div id="loadingScreen">
+  <div class="spinner"></div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     HEADER
+     Sticky top bar. Back button sends QUIT to Cogniss.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="header">
+  <div></div>
+  <button class="back-btn" id="backBtn" aria-label="Close">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
+      <path d="M1.5 1.5l15 15M16.5 1.5l-15 15"/>
+    </svg>
+  </button>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     MAIN CONTENT
+     ════════════════════════════════════════════════════════════════ -->
+<div class="scroll" id="scrollArea">
+
+  <!-- PULL TO REFRESH indicator — shown during overscroll gesture -->
+  <div class="ptr-bar" id="ptrBar">
+    <div class="ptr-spin" id="ptrSpin"></div>
+    <div class="ptr-arrow" id="ptrArrow">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 3v8M4 11l4 4 4-4"/>
+      </svg>
+    </div>
+    <span id="ptrLabel">Pull to refresh</span>
+  </div>
+
+  <!-- GREETING — time-based salutation + motivational sub-line -->
+  <div class="greeting">
+    <div class="greeting-sub" id="greetMsg">Good morning,</div>
+    <div class="greeting-name" id="greetName">—</div>
+    <div class="greeting-motiv" id="greetMotiv"></div>
+  </div>
+
+  <!-- EMPTY STATE — shown when no HealthKit data is available -->
+  <div id="emptyState">
+    <div class="empty-title">No data available</div>
+    <div class="empty-sub">Check your HealthKit permissions and try again.</div>
+  </div>
+
+  <!-- ── STEPS SECTION ──────────────────────────────────────────
+       Hidden by default. renderAll() shows it when STEP_DAY_MAP
+       has been populated by loadHealthData().
+       ────────────────────────────────────────────────────────── -->
+  <div id="stepsSection" style="display:none">
+    <div class="section-label">Steps Activity</div>
+    <div class="card">
+      <!-- Hero: today's steps vs goal, meta line, Set Goal button -->
+      <div class="steps-hero-row">
+        <div class="steps-hero-text">
+          <div class="steps-today-label">Today's Steps</div>
+          <div class="steps-hero-main" id="donutSteps">
+            — <span class="steps-hero-goal">/ —</span>
+          </div>
+          <div class="steps-hero-meta" id="donutMeta">— steps to goal</div>
+          <button class="set-goal-btn" id="setGoalBtn">Set Goal</button>
+        </div>
+
+        <!-- Donut ring: r=58, circumference≈364. Animated by animateDonut() -->
+        <div class="donut-wrap">
+          <svg width="140" height="140" viewBox="0 0 140 140" aria-hidden="true">
+            <circle cx="70" cy="70" r="58" fill="none" stroke="var(--hair)" stroke-width="11"/>
+            <circle id="donutFill"
+              cx="70" cy="70" r="58" fill="none"
+              stroke="var(--accent)" stroke-width="11"
+              stroke-dasharray="364" stroke-dashoffset="364"
+              stroke-linecap="round"
+              style="transition: stroke-dashoffset 0.9s cubic-bezier(0.4,0,0.2,1)"/>
+          </svg>
+          <div class="donut-pct" id="donutPct">0%</div>
+        </div>
+      </div>
+
+      <!-- 7-day bar chart — built by renderChart() -->
+      <div class="chart-outer">
+        <div class="chart-bars" id="chartBars"></div>
+        <div class="chart-xlabels" id="chartXLabels"></div>
+      </div>
+
+      <!-- Weekly stats summary -->
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-val" id="statAvg">—</div>
+          <div class="stat-lbl">Weekly Avg</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val" id="statBest">—</div>
+          <div class="stat-lbl">Best Day</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-val" id="statTotal">—</div>
+          <div class="stat-lbl">Weekly Total</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FITNESS SECTION ───────────────────────────────────────
+       Hidden by default. renderAll() shows it when CALORIES
+       has been populated by loadHealthData().
+       ────────────────────────────────────────────────────────── -->
+  <div id="fitnessSection" style="display:none">
+    <div class="section-label">Calories Burn</div>
+    <div class="card">
+      <!-- Hero: burned today vs target, meta line, Set Target button -->
+      <div class="steps-hero-row">
+        <div class="steps-hero-text">
+          <div class="steps-today-label">Calories Burned Today</div>
+          <div class="steps-hero-main" id="calBig">
+            — <span class="steps-hero-goal">/ — <span class="cal-kcal-unit">kcal</span></span>
+          </div>
+          <div class="steps-hero-meta" id="calMeta">— kcal to target</div>
+          <button class="set-goal-btn" id="setTargetBtn">Set Target</button>
+        </div>
+
+        <!-- Calories donut ring — same dimensions as steps donut -->
+        <div class="donut-wrap">
+          <svg width="140" height="140" viewBox="0 0 140 140" aria-hidden="true">
+            <circle cx="70" cy="70" r="58" fill="none" stroke="var(--hair)" stroke-width="11"/>
+            <circle id="calDonutFill"
+              cx="70" cy="70" r="58" fill="none"
+              stroke="var(--accent)" stroke-width="11"
+              stroke-dasharray="364" stroke-dashoffset="364"
+              stroke-linecap="round"
+              style="transition: stroke-dashoffset 0.9s cubic-bezier(0.4,0,0.2,1)"/>
+          </svg>
+          <div class="donut-pct" id="calDonutPct">0%</div>
+        </div>
+      </div>
+
+      <!-- Active / Basal calorie breakdown -->
+      <div class="cal-split" style="margin-top:4px">
+        <div class="cal-split-item">
+          <div class="cal-split-label">Active</div>
+          <div>
+            <span class="cal-split-val" id="calActive">—</span>
+            <span class="cal-split-unit">kcal</span>
+          </div>
+        </div>
+        <div class="cal-split-item">
+          <div class="cal-split-label">Basal</div>
+          <div>
+            <span class="cal-split-val" id="calBasal">—</span>
+            <span class="cal-split-unit">kcal</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Workouts list — built by renderWorkouts() -->
+      <div class="workouts-header">
+        <span class="workouts-title">Workouts</span>
+        <span class="workouts-count" id="workoutsCount">—</span>
+      </div>
+      <div id="workoutRows"></div>
+    </div>
+  </div>
+
+</div><!-- /scroll -->
+
+<!-- ════════════════════════════════════════════════════════════════
+     GOAL / TARGET BOTTOM SHEET
+     Shared modal for setting step goal and calorie target.
+     openSheet(mode) configures it for 'goal' or 'target'.
+     ════════════════════════════════════════════════════════════════ -->
+<div class="scrim" id="scrim"></div>
+
+<div class="sheet" id="goalSheet" aria-modal="true" role="dialog">
+  <div class="grabber"></div>
+
+  <div class="sheet-title-row">
+    <div>
+      <div class="sheet-label" id="sheetLabel">Daily Target</div>
+      <div class="sheet-subtitle" id="sheetSubtitle">Steps per day</div>
+    </div>
+    <button class="close-btn" id="closeSheet" aria-label="Close">
+      <svg width="13" height="13" viewBox="0 0 13 13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+        <path d="M1 1l11 11M12 1L1 12"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Live draft value display — updates as user drags slider or taps chips -->
+  <div class="draft-val">
+    <span id="draftVal">8,000</span>
+    <span class="draft-unit" id="draftUnit">steps</span>
+  </div>
+
+  <!-- Range slider — min/max/step set by openSheet() -->
+  <div class="slider-wrap">
+    <input type="range" id="goalSlider" min="1000" max="25000" step="500" value="8000"/>
+    <div class="slider-minmax">
+      <span id="sliderMin">1,000</span>
+      <span id="sliderMax">25,000</span>
+    </div>
+  </div>
+
+  <!-- Quick pick chips — built by buildChips() -->
+  <div class="chips" id="chipsRow"></div>
+
+  <!-- Confirm button — calls commitSheet() which saves via QUESTION_RESPONSE -->
+  <button class="primary-btn" id="commitBtn">Set Goal</button>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════
+     VERSION FOOTER
+     Update version string on every change.
+     ════════════════════════════════════════════════════════════════ -->
+<div style="text-align:center;padding:24px 0 8px;font-size:10px;font-weight:500;color:#c0c4ce;letter-spacing:.3px;">v1.6.0</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════
+   COGNISS BRIDGE
+   ────────────────────────────────────────────────────────────────
+   postToApp()   — sends a message to the Cogniss native container
+   restRequest() — sends REST_REQUEST and awaits REQUEST_RESPONSE
+
+   IMPORTANT: On iOS React Native, event.data may arrive as a
+   parsed object (not a JSON string). onMessage() guards for this.
+   All restRequest calls have a 10s timeout so a lost response
+   never hangs the entire load.
+   ════════════════════════════════════════════════════════════════ */
+const isNative = typeof window.ReactNativeWebView !== 'undefined'
+
+function postToApp(key, data) {
+  const msg = JSON.stringify({ key, data: data || null })
+  if (isNative) window.ReactNativeWebView.postMessage(msg)
+  else window.parent.postMessage(msg, '*')
+}
+
+let _reqId = 0
+const _pending = {}
+
+function restRequest(method, model, data, specialParams) {
+  return new Promise((resolve, reject) => {
+    const id = 'r' + (++_reqId)
+
+    // Timeout: if the container drops the response, reject after 10s
+    const timer = setTimeout(() => {
+      if (_pending[id]) {
+        delete _pending[id]
+        reject(new Error('timeout:' + model))
+      }
+    }, 10000)
+
+    _pending[id] = {
+      resolve: v => { clearTimeout(timer); resolve(v) },
+      reject:  e => { clearTimeout(timer); reject(e)  }
+    }
+
+    const msg = JSON.stringify({
+      key: 'REST_REQUEST', method, model, data, id,
+      specialParams: specialParams || null
+    })
+    if (isNative) window.ReactNativeWebView.postMessage(msg)
+    else window.parent.postMessage(msg, '*')
+  })
+}
+
+/* ════════════════════════════════════════════════════════════════
+   APP STATE
+   ────────────────────────────────────────────────────────────────
+   state       — Cogniss context messages (USER, CONFIG, ACTIVITY, etc.)
+   hd          — health data fetched from HealthKit via REST_REQUEST
+                 All fields start as null; renderAll() hides sections
+                 until each is populated.
+   stepGoal    — user's daily step target (default 8000)
+   calTarget   — user's daily calorie burn target (default 2500)
+   barsAnimated — prevents chart bars re-animating on goal changes
+   sheetMode   — 'goal' | 'target', controls what the sheet edits
+   draft       — working value while the sheet is open
+   ════════════════════════════════════════════════════════════════ */
+const state = {}
+
+const hd = {
+  STEP_DAY_MAP:    null,  // { 'YYYY-MM-DD': totalSteps } for last ~21 days
+  TODAY_STEPS:     null,  // integer
+  YESTERDAY_STEPS: null,  // integer
+  CALORIES:        null,  // { active: number, basal: number }
+  WORKOUTS:        null,  // array of { type, kcal, time }
+}
+
+let stepGoal    = 8000
+let calTarget   = 2500
+let barsAnimated = false
+let sheetMode   = 'goal'
+let draft       = 8000
+
+/* ════════════════════════════════════════════════════════════════
+   HELPERS
+   ════════════════════════════════════════════════════════════════ */
+
+/**
+ * Build a YYYY-MM-DD key using LOCAL timezone (not UTC).
+ * Critical: toISOString() returns UTC and would show the wrong
+ * day for timezones ahead of UTC (e.g. Australia UTC+10).
+ */
+function localDateKey(d) {
+  return (
+    d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0')
+  )
+}
+
+/** Format a number with locale commas, or return '—' if null */
+const fmtN = n => (n != null ? Math.round(n).toLocaleString() : '—')
+
+/** Format chip labels: whole thousands → "8k", halves → "2.5k" */
+function chipLabel(v) {
+  return v % 1000 === 0 ? (v / 1000) + 'k' : (v / 1000).toFixed(1) + 'k'
+}
+
+/* ════════════════════════════════════════════════════════════════
+   THEME
+   ────────────────────────────────────────────────────────────────
+   Fetches app and platform theme settings from Cogniss.
+   Only overrides --accent (+ soft/mid tints), --bg, --header-bg.
+   All other design tokens remain from the CSS defaults.
+
+   Called twice:
+   1. At init() alongside loadHealthData()
+   2. Again when ACTIVITY_RESPONSE arrives (it contains the app ID
+      needed to fetch app-level theme, which may differ from platform)
+   ════════════════════════════════════════════════════════════════ */
+async function applyTheme() {
+  try {
+    const appId = state.ACTIVITY_RESPONSE?.app
+    const [appRes, settingsRes] = await Promise.all([
+      appId ? restRequest('get', 'App', appId) : Promise.resolve(null),
+      restRequest('list', 'Settings', {})
+    ])
+    const appTheme      = appRes?.theme || {}
+    const platformTheme = settingsRes?.items?.[0]?.theme || {}
+
+    // App-level overrides platform-level
+    const colors = Object.assign({}, platformTheme.colors, appTheme.colors)
+    const root   = document.documentElement
+
+    if (colors.primary) {
+      root.style.setProperty('--accent',      colors.primary)
+      root.style.setProperty('--accent-soft', `color-mix(in srgb, ${colors.primary} 10%, white)`)
+      root.style.setProperty('--accent-mid',  `color-mix(in srgb, ${colors.primary} 30%, white)`)
+    }
+
+    // Page background: prefer explicit light colour, otherwise derive a soft tint
+    if (colors.light) {
+      root.style.setProperty('--bg', colors.light)
+    } else if (colors.primary) {
+      root.style.setProperty('--bg', `color-mix(in srgb, ${colors.primary} 6%, white)`)
+    }
+
+    // Header background from activity header colour setting
+    const headerColor = (appTheme.activityHeader || platformTheme.activityHeader)?.color
+    if (headerColor) root.style.setProperty('--header-bg', headerColor)
+  } catch (e) {
+    // Fail silently — CSS defaults are perfectly usable
+  }
+  applyContrastColor()
+  applyHeaderContrast()
+}
+
+/**
+ * applyContrastColor()
+ * Reads the current --accent value and sets --accent-fg to either
+ * #ffffff or #111318 depending on which gives better contrast.
+ * Uses the WCAG relative luminance formula on the RGB values.
+ * Called after applyTheme() so it always reflects the live accent.
+ *
+ * --accent-fg is used by filled buttons (primary-btn, chip.active)
+ * so their labels stay readable regardless of the brand colour.
+ */
+function applyContrastColor() {
+  const accent = getComputedStyle(document.documentElement)
+    .getPropertyValue('--accent').trim()
+
+  // Parse hex (#rrggbb or #rgb)
+  let r, g, b
+  const hex = accent.replace('#', '')
+  if (hex.length === 3) {
+    r = parseInt(hex[0] + hex[0], 16)
+    g = parseInt(hex[1] + hex[1], 16)
+    b = parseInt(hex[2] + hex[2], 16)
+  } else {
+    r = parseInt(hex.slice(0, 2), 16)
+    g = parseInt(hex.slice(2, 4), 16)
+    b = parseInt(hex.slice(4, 6), 16)
+  }
+
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return  // not a plain hex — leave as-is
+
+  // WCAG relative luminance
+  const toLinear = c => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+  }
+  const L = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b)
+
+  // Use white text on dark backgrounds (L < 0.35), dark text on light
+  const fg = L < 0.35 ? '#ffffff' : '#111318'
+  document.documentElement.style.setProperty('--accent-fg', fg)
+
+  // Also compute contrast colour for the header based on --header-bg
+  applyHeaderContrast()
+}
+
+/**
+ * applyHeaderContrast()
+ * Reads --header-bg and sets --header-fg to white or dark ink
+ * so the X close button stays readable against any header colour.
+ */
+function applyHeaderContrast() {
+  const headerBg = getComputedStyle(document.documentElement)
+    .getPropertyValue('--header-bg').trim()
+
+  if (!headerBg || headerBg === '#fff' || headerBg === 'initial') return
+
+  const hex = headerBg.replace('#', '')
+  let hr, hg, hb
+  if (hex.length === 3) {
+    hr = parseInt(hex[0] + hex[0], 16)
+    hg = parseInt(hex[1] + hex[1], 16)
+    hb = parseInt(hex[2] + hex[2], 16)
+  } else {
+    hr = parseInt(hex.slice(0, 2), 16)
+    hg = parseInt(hex.slice(2, 4), 16)
+    hb = parseInt(hex.slice(4, 6), 16)
+  }
+
+  if (isNaN(hr) || isNaN(hg) || isNaN(hb)) return
+
+  const toLinear = c => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+  }
+  const L = 0.2126 * toLinear(hr) + 0.7152 * toLinear(hg) + 0.0722 * toLinear(hb)
+  document.documentElement.style.setProperty('--header-fg', L < 0.35 ? '#ffffff' : '#111318')
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MOTIVATIONAL MESSAGES
+   ────────────────────────────────────────────────────────────────
+   updateMotiv() picks a random message based on which goals have
+   been met. Called inside renderAll() each time data updates.
+   NOTE: Use double-quoted strings here — single quotes with
+   apostrophes will cause a SyntaxError.
+   ════════════════════════════════════════════════════════════════ */
+const MOTIV_NONE = [
+  "Keep moving, you are getting closer to today's goals.",
+  "Every step and every calorie counts.",
+  "Stay active, you have got this!",
+  "Small progress today leads to big results tomorrow.",
+  "Keep the momentum going.",
+  "One walk closer to your goals.",
+  "You are building healthy habits one step at a time.",
+  "Keep pushing, your goals are within reach.",
+  "Progress, not perfection.",
+  "Let us finish today strong!"
+]
+const MOTIV_STEPS_ONLY = [
+  "Step target complete! Keep moving to hit your calorie goal.",
+  "Great steps today! Now let us close out those calories.",
+  "Walking done, burning continues. Finish strong on calories!",
+  "You nailed your steps. One goal left, go get it.",
+  "Steps in the bag. Keep the energy going for your calorie goal."
+]
+const MOTIV_CALS_ONLY = [
+  "Calorie goal achieved! Time to complete your step goal.",
+  "You are burning strong. Now let us get those steps in.",
+  "Energy goal done! Lace up and finish your step count.",
+  "Calories crushed. One more goal waiting for you.",
+  "Burn complete. Keep moving to close out your steps."
+]
+const MOTIV_STEPS_DONE = [
+  "Step goal done for today. Great work!",
+  "You hit your step target. Keep that momentum going.",
+  "Steps complete! You showed up and delivered today.",
+  "Daily step goal crushed. That is what dedication looks like.",
+  "Your steps are done for the day. Well earned!"
+]
+const MOTIV_CALS_DONE = [
+  "Calorie goal done for today. Great effort!",
+  "You hit your burn target. Keep that energy going.",
+  "Energy goal complete! You showed up and put in the work.",
+  "Daily calorie goal crushed. That is consistency in action.",
+  "Your burn is done for the day. Well earned!"
+]
+const MOTIV_BOTH = [
+  "You completed both goals today. Incredible effort!",
+  "Outstanding, both targets hit. You are exceeding expectations.",
+  "You are on fire today!",
+  "Both goals done, keep up the amazing work!",
+  "What a performance! Every step and every calorie counts.",
+  "Absolutely smashing it today. You should be proud.",
+  "Double goal day complete. That is what consistency looks like.",
+  "You hit everything today. Well done.",
+  "Champions show up like this. Keep it going.",
+  "Both goals in the bag. You earned today."
+]
+
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)]
+}
+
+function updateMotiv() {
+  const todaySteps = hd.TODAY_STEPS ?? 0
+  const totalCals  = hd.CALORIES ? (hd.CALORIES.active || 0) + (hd.CALORIES.basal || 0) : 0
+  const stepsHit   = hd.STEP_DAY_MAP !== null && todaySteps >= stepGoal
+  const calsHit    = hd.CALORIES !== null && totalCals >= calTarget
+
+  const hasStepsData = hd.STEP_DAY_MAP !== null
+  const hasCalsData  = hd.CALORIES !== null
+
+  let msg = ''
+  if (stepsHit && calsHit) {
+    // Both data present and both goals met
+    msg = pick(MOTIV_BOTH)
+  } else if (stepsHit && hasCalsData && !calsHit) {
+    // Both data present, steps done, calories not yet hit
+    msg = pick(MOTIV_STEPS_ONLY)
+  } else if (calsHit && hasStepsData && !stepsHit) {
+    // Both data present, calories done, steps not yet hit
+    msg = pick(MOTIV_CALS_ONLY)
+  } else if (stepsHit && !hasCalsData) {
+    // Only steps data available and goal is completed
+    msg = pick(MOTIV_STEPS_DONE)
+  } else if (calsHit && !hasStepsData) {
+    // Only calories data available and goal is completed
+    msg = pick(MOTIV_CALS_DONE)
+  } else if (hasStepsData || hasCalsData) {
+    // Data present but no goals hit yet
+    msg = pick(MOTIV_NONE)
+  }
+
+  document.getElementById('greetMotiv').textContent = msg
+}
+
+/* ════════════════════════════════════════════════════════════════
+   CHART
+   ────────────────────────────────────────────────────────────────
+   getWeekSlice() returns the last 7 calendar days (today = last).
+   Uses localDateKey() to match keys in hd.STEP_DAY_MAP correctly.
+   renderChart() builds the bar elements and triggers scaleY animation.
+   barsAnimated flag prevents re-animating on subsequent renderAll calls.
+   ════════════════════════════════════════════════════════════════ */
+function getWeekSlice() {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(today)
+    d.setDate(d.getDate() - (6 - i))  // i=0 → 6 days ago, i=6 → today
+    const ds    = localDateKey(d)
+    const day   = d.toLocaleDateString('en-US', { weekday: 'short' })
+    const steps = (hd.STEP_DAY_MAP && hd.STEP_DAY_MAP[ds]) || 0
+    return { ds, day, steps }
+  })
+}
+
+function renderChart(week) {
+  const barsEl = document.getElementById('chartBars')
+  const xlblEl = document.getElementById('chartXLabels')
+  barsEl.innerHTML = ''
+  xlblEl.innerHTML = ''
+
+  // Y-axis ceiling: tallest of (max day, goal, 1) so nothing overflows
+  const maxV = Math.max(...week.map(d => d.steps), stepGoal, 1)
+
+  week.forEach((day, i) => {
+    // Bar column
+    const col  = document.createElement('div'); col.className = 'bar-col'
+    const wrap = document.createElement('div'); wrap.className = 'bar-wrap'
+    const bar  = document.createElement('div')
+    bar.className  = 'bar ' + (day.steps >= stepGoal ? 'accent' : 'dim')
+    bar.style.height = Math.max((day.steps / maxV) * 100, 1) + '%'
+    wrap.appendChild(bar)
+    col.appendChild(wrap)
+    barsEl.appendChild(col)
+
+    // X-axis label
+    const lbl = document.createElement('div'); lbl.className = 'bar-xlabel'
+    lbl.innerHTML = `<span class="day">${day.day}</span><span class="val">${fmtN(day.steps)}</span>`
+    xlblEl.appendChild(lbl)
+
+    // Stagger bar entry animation on first render only
+    if (!barsAnimated) {
+      setTimeout(() => { bar.style.transform = 'scaleY(1)' }, 80 + i * 50)
+    } else {
+      bar.style.transition = 'none'
+      bar.style.transform  = 'scaleY(1)'
+    }
+  })
+  barsAnimated = true
+}
+
+/* ════════════════════════════════════════════════════════════════
+   DONUT RING ANIMATION
+   ────────────────────────────────────────────────────────────────
+   Shared by both steps and calories donuts.
+   Circumference = 2 * PI * 58 ≈ 364 (matches SVG r="58").
+   stroke-dashoffset = circ * (1 - progress) drives the arc.
+   ════════════════════════════════════════════════════════════════ */
+function animateDonut(fillId, pctId, value, total) {
+  const pct  = Math.min(1, value / total)
+  const circ = 2 * Math.PI * 58  // must match SVG r attribute
+  document.getElementById(fillId).setAttribute('stroke-dasharray', circ)
+  document.getElementById(fillId).style.strokeDashoffset = circ * (1 - pct)
+  document.getElementById(pctId).textContent = Math.round(pct * 100) + '%'
+}
+
+/* ════════════════════════════════════════════════════════════════
+   RENDER
+   ────────────────────────────────────────────────────────────────
+   renderAll() is the single source of truth for the UI.
+   It reads from hd (health data) and the goal variables.
+   Sections are shown/hidden based on data availability.
+   ════════════════════════════════════════════════════════════════ */
+function renderAll() {
+  const hasSteps = hd.STEP_DAY_MAP !== null
+  const hasCals  = hd.CALORIES     !== null
+  const hasAny   = hasSteps || hasCals
+
+  // Show empty state only if absolutely no data is available
+  document.getElementById('emptyState').style.display    = hasAny   ? 'none'  : 'flex'
+  document.getElementById('stepsSection').style.display  = hasSteps ? ''      : 'none'
+  document.getElementById('fitnessSection').style.display = hasCals ? ''      : 'none'
+
+  // Update motivational message
+  updateMotiv()
+
+  // ── Steps card ──────────────────────────────────────────────────
+  if (hasSteps) {
+    const week  = getWeekSlice()
+    const vals  = week.map(d => d.steps)
+    const today = hd.TODAY_STEPS     ?? 0
+    const yest  = hd.YESTERDAY_STEPS ?? 0
+
+    // Weekly stats
+    document.getElementById('statAvg').textContent   = fmtN(vals.reduce((a, b) => a + b, 0) / 7)
+    document.getElementById('statBest').textContent  = fmtN(Math.max(...vals))
+    document.getElementById('statTotal').textContent = fmtN(vals.reduce((a, b) => a + b, 0))
+
+    // Bar chart
+    renderChart(week)
+
+    // Hero number: "4,010 / 8,000"
+    document.getElementById('donutSteps').innerHTML =
+      `${fmtN(today)} <span class="steps-hero-goal">/ ${fmtN(stepGoal)}</span>`
+
+    // Meta: "3,990 steps to goal   Yesterday: 4,675  ↓ 14% down"
+    const remaining = Math.max(0, stepGoal - today)
+    const diff      = today - yest
+    const diffPct   = yest > 0 ? Math.round(Math.abs(diff) / yest * 100) : 0
+    const diffStr   = diff >= 0 ? `\u2191 ${diffPct}% up` : `\u2193 ${diffPct}% down`
+    const metaEl2 = document.getElementById('donutMeta')
+    metaEl2.innerHTML = ''
+    const line1  = document.createTextNode(fmtN(remaining) + ' steps to goal')
+    const br1    = document.createElement('br')
+    const yestEl = document.createElement('strong')
+    yestEl.textContent = 'Yesterday: ' + fmtN(yest)
+    const br2    = document.createElement('br')
+    const diffEl = document.createElement('span')
+    diffEl.textContent = diffStr
+    metaEl2.appendChild(line1)
+    metaEl2.appendChild(br1)
+    metaEl2.appendChild(yestEl)
+    metaEl2.appendChild(br2)
+    metaEl2.appendChild(diffEl)
+
+    // Donut ring
+    animateDonut('donutFill', 'donutPct', today, stepGoal)
+  }
+
+  // ── Calories card ────────────────────────────────────────────────
+  if (hasCals) {
+    const c     = hd.CALORIES
+    const total = (c.active || 0) + (c.basal || 0)
+
+    // Hero number: "1,234 / 2,500 kcal"
+    document.getElementById('calBig').innerHTML =
+      `${fmtN(total)} <span class="steps-hero-goal">/ ${fmtN(calTarget)} <span class="cal-kcal-unit">kcal</span></span>`
+
+    // Split breakdown
+    document.getElementById('calActive').textContent = fmtN(c.active)
+    document.getElementById('calBasal').textContent  = fmtN(c.basal)
+
+    // Meta: "X kcal to target"
+    const remaining = Math.max(0, calTarget - total)
+    document.getElementById('calMeta').textContent = fmtN(remaining) + ' kcal to target'
+
+    // Donut ring
+    animateDonut('calDonutFill', 'calDonutPct', total, calTarget)
+
+    renderWorkouts()
+  }
+}
+
+function renderWorkouts() {
+  const list = hd.WORKOUTS || []
+  document.getElementById('workoutsCount').textContent =
+    list.length
+      ? 'This week — ' + list.length + ' Session' + (list.length !== 1 ? 's' : '')
+      : 'No sessions this week'
+
+  const container = document.getElementById('workoutRows')
+  container.innerHTML = ''
+
+  // Map HealthKit activityName to emoji. Add more as needed.
+  const EMOJI = {
+    Run: '🏃', Running: '🏃', Strength: '💪', Yoga: '🧘',
+    Cycling: '🚴', Swimming: '🏊', Walk: '🚶', Workout: '🏋️'
+  }
+
+  list.forEach(w => {
+    const row      = document.createElement('div')
+    row.className  = 'workout-row'
+    const emoji    = EMOJI[w.type] || '🏋️'
+    const kcalStr  = w.kcal != null ? fmtN(w.kcal) + ' kcal' : '—'
+    // Build workout row without innerHTML to avoid XSS from server data
+    const iconEl = document.createElement('div'); iconEl.className = 'workout-icon'; iconEl.textContent = emoji
+    const infoEl = document.createElement('div'); infoEl.style.flex = '1'
+    const nameEl = document.createElement('div'); nameEl.className = 'workout-name'; nameEl.textContent = w.type
+    const metaEl = document.createElement('div'); metaEl.className = 'workout-time-meta'; metaEl.textContent = w.time
+    const durEl  = document.createElement('div'); durEl.className = 'workout-dur'; durEl.textContent = kcalStr
+    infoEl.appendChild(nameEl); infoEl.appendChild(metaEl)
+    row.appendChild(iconEl); row.appendChild(infoEl); row.appendChild(durEl)
+    container.appendChild(row)
+  })
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GOAL / TARGET PERSISTENCE
+   ────────────────────────────────────────────────────────────────
+   savePrefs() — posts a QUESTION_RESPONSE at question index 0 with
+     JSON text { stepGoal, calTarget }. The Cogniss container saves
+     this as a QuestionResponse record.
+
+   loadPrefs() — called at startup. Reads back the saved text:
+     1. Apply CONFIG defaults (from Activity customConfig)
+     2. Find question _id from state.QUESTIONS by label "fitness_prefs"
+     3. Query QuestionResponse by that question + user (primary path)
+     4. If not found, scan recent responses for this activity (fallback)
+
+   SETUP NOTE: The Activity needs one SHORT_TEXT question with
+   label "fitness_prefs" for the primary path to work. Without it
+   the fallback still works but is slower (scans up to 20 records).
+   ════════════════════════════════════════════════════════════════ */
+function savePrefs() {
+  const text = JSON.stringify({ stepGoal, calTarget })
+  postToApp('QUESTION_RESPONSE', { index: 0, text })
+  updateGoalBtnLabels()
+}
+
+function updateGoalBtnLabels() {
+  document.getElementById('setGoalBtn').textContent   = 'Update Goal'
+  document.getElementById('setTargetBtn').textContent = 'Update Target'
+}
+
+async function loadPrefs() {
+  // Step 1: CONFIG defaults (from Activity custom config in admin panel)
+  if (state.CONFIG?.step_goal)  stepGoal  = parseInt(state.CONFIG.step_goal)  || 8000
+  if (state.CONFIG?.cal_target) calTarget = parseInt(state.CONFIG.cal_target) || 2500
+
+  if (!state.USER?.id) return
+
+  // Step 2: find the question _id from state.QUESTIONS by label
+  const questions  = Array.isArray(state.QUESTIONS) ? state.QUESTIONS : []
+  const question   = questions.find(q => q.label === 'fitness_prefs') || questions[0]
+  const questionId = (question && (question._id || question.id)) || null
+
+  try {
+    let raw = null
+
+    // Primary: query by question _id + user (fastest, most precise)
+    if (questionId) {
+      const res  = await restRequest('list', 'QuestionResponse', {
+        question: questionId,
+        user:     state.USER.id,
+        sort:     '-date',
+        limit:    1
+      })
+      const item = res?.items?.[0]
+      raw = (item && (item.text || item.value || item.answer)) || null
+    }
+
+    // Fallback: scan recent responses for the activity and find valid JSON
+    if (!raw && state.ACTIVITY?.id) {
+      const res   = await restRequest('list', 'QuestionResponse', {
+        activity: state.ACTIVITY.id,
+        user:     state.USER.id,
+        sort:     '-date',
+        limit:    20
+      })
+      const items = res?.items || []
+      for (const item of items) {
+        const candidate = item.text || item.value || ''
+        try {
+          const parsed = JSON.parse(candidate)
+          if (parsed && (parsed.stepGoal || parsed.calTarget)) {
+            raw = candidate
+            break
+          }
+        } catch (e) { /* not our JSON, skip */ }
+      }
+    }
+
+    // Apply saved prefs if found
+    if (raw) {
+      try {
+        const prefs = JSON.parse(raw)
+        if (prefs?.stepGoal)  stepGoal  = prefs.stepGoal
+        if (prefs?.calTarget) calTarget = prefs.calTarget
+        updateGoalBtnLabels()
+      } catch (e) {
+      }
+    }
+  } catch (e) {
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   GOAL SHEET — open / close / commit
+   ════════════════════════════════════════════════════════════════ */
+
+// Step goal quick picks
+const STEP_CHIPS   = [5000, 8000, 10000, 12000]
+// Calorie target quick picks (chipLabel formats 2500 → "2.5k")
+const TARGET_CHIPS = [2000, 2500, 3000, 3500]
+
+function openSheet(mode) {
+  sheetMode = mode
+  draft = (mode === 'goal') ? stepGoal : calTarget
+
+  if (mode === 'goal') {
+    document.getElementById('sheetLabel').textContent    = 'Daily Target'
+    document.getElementById('sheetSubtitle').textContent = 'Steps per day'
+    document.getElementById('draftUnit').textContent     = 'steps'
+    document.getElementById('commitBtn').textContent     = 'Set Goal'
+    const sl = document.getElementById('goalSlider')
+    sl.min = 1000; sl.max = 25000; sl.step = 500
+    document.getElementById('sliderMin').textContent = '1,000'
+    document.getElementById('sliderMax').textContent = '25,000'
+    buildChips(STEP_CHIPS)
+  } else {
+    document.getElementById('sheetLabel').textContent    = 'Calorie Target'
+    document.getElementById('sheetSubtitle').textContent = 'kcal per day'
+    document.getElementById('draftUnit').textContent     = 'kcal'
+    document.getElementById('commitBtn').textContent     = 'Set Target'
+    const sl = document.getElementById('goalSlider')
+    sl.min = 500; sl.max = 5000; sl.step = 100
+    document.getElementById('sliderMin').textContent = '500'
+    document.getElementById('sliderMax').textContent = '5,000'
+    buildChips(TARGET_CHIPS)
+  }
+
+  document.getElementById('goalSlider').value     = draft
+  document.getElementById('draftVal').textContent = fmtN(draft)
+  updateSlider()
+
+  document.getElementById('scrim').classList.add('open')
+  document.getElementById('goalSheet').classList.add('open')
+}
+
+function closeSheet() {
+  document.getElementById('scrim').classList.remove('open')
+  document.getElementById('goalSheet').classList.remove('open')
+}
+
+async function commitSheet() {
+  if (sheetMode === 'goal') {
+    stepGoal     = draft
+    barsAnimated = false  // re-animate bars to reflect new goal threshold
+  } else {
+    calTarget = draft
+  }
+  closeSheet()
+  renderAll()
+  savePrefs()  // persist to QuestionResponse via QUESTION_RESPONSE message
+}
+
+function buildChips(vals) {
+  const row = document.getElementById('chipsRow')
+  row.innerHTML = ''
+  vals.forEach(v => {
+    const chip = document.createElement('button')
+    chip.className  = 'chip' + (v === draft ? ' active' : '')
+    chip.textContent = chipLabel(v)
+    chip.addEventListener('click', () => { updateDraft(v); buildChips(vals) })
+    row.appendChild(chip)
+  })
+}
+
+function updateDraft(v) {
+  draft = v
+  document.getElementById('draftVal').textContent = fmtN(v)
+  document.getElementById('goalSlider').value     = v
+  updateSlider()
+}
+
+function updateSlider() {
+  const sl  = document.getElementById('goalSlider')
+  const pct = ((draft - Number(sl.min)) / (Number(sl.max) - Number(sl.min))) * 100
+  // Fill the track up to the thumb position using a gradient
+  sl.style.background = `linear-gradient(to right, var(--accent) ${pct}%, var(--hair) ${pct}%)`
+}
+
+/* Sheet event listeners */
+document.getElementById('setGoalBtn').addEventListener('click',   () => openSheet('goal'))
+document.getElementById('setTargetBtn').addEventListener('click', () => openSheet('target'))
+document.getElementById('closeSheet').addEventListener('click',   closeSheet)
+document.getElementById('scrim').addEventListener('click',        closeSheet)
+document.getElementById('commitBtn').addEventListener('click',    commitSheet)
+document.getElementById('goalSlider').addEventListener('input', e => {
+  updateDraft(Number(e.target.value))
+  buildChips(sheetMode === 'goal' ? STEP_CHIPS : TARGET_CHIPS)
+})
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet() })
+
+/* Back button → close the activity in Cogniss */
+document.getElementById('backBtn').addEventListener('click', () => {
+  postToApp('QUIT', { completeState: 'COMPLETE' })
+})
+
+/* ════════════════════════════════════════════════════════════════
+   HEALTH DATA
+   ────────────────────────────────────────────────────────────────
+   Fetches from AppleHealthRecord via REST_REQUEST.
+   All fetches are wrapped in individual try/catch so one failure
+   does not block the others.
+
+   DATA TYPES USED:
+   • STEP_COUNT          — daily step records
+   • ACTIVE_ENERGY_BURNED — active kcal
+   • BASAL_ENERGY_BURNED  — resting kcal
+   • WORKOUT             — exercise sessions (activityName, calories)
+
+   TIMEZONE: localDateKey() is used everywhere to avoid UTC/local
+   mismatch that causes "wrong day" on the chart.
+   ════════════════════════════════════════════════════════════════ */
+async function loadHealthData() {
+  if (!state.USER) return
+
+  const now        = new Date()
+  const todayStart = new Date(now);  todayStart.setHours(0, 0, 0, 0)
+  const yestStart  = new Date(todayStart); yestStart.setDate(yestStart.getDate() - 1)
+
+  // ── Step count — last ~21 days (150 records covers 3 weeks) ───────
+  try {
+    const res = await restRequest('list', 'AppleHealthRecord', {
+      user:  state.USER.id,
+      type:  'STEP_COUNT',
+      sort:  '-start',
+      limit: 150
+    })
+    if (res?.items?.length) {
+      // Aggregate by local date key
+      const map = {}
+      res.items.forEach(r => {
+        const k = localDateKey(new Date(r.start))
+        map[k] = (map[k] || 0) + (r.value || 0)
+      })
+      Object.keys(map).forEach(k => { map[k] = Math.round(map[k]) })
+      hd.STEP_DAY_MAP = map
+
+      // Today and yesterday totals
+      hd.TODAY_STEPS = Math.round(
+        res.items
+          .filter(r => new Date(r.start) >= todayStart)
+          .reduce((s, r) => s + (r.value || 0), 0)
+      )
+      hd.YESTERDAY_STEPS = Math.round(
+        res.items
+          .filter(r => new Date(r.start) >= yestStart && new Date(r.start) < todayStart)
+          .reduce((s, r) => s + (r.value || 0), 0)
+      )
+    }
+  } catch (e) {
+ }
+
+  // ── Calories — active and basal fetched in parallel ───────────────
+  try {
+    const [aRes, bRes] = await Promise.all([
+      restRequest('list', 'AppleHealthRecord', {
+        user: state.USER.id, type: 'ACTIVE_ENERGY_BURNED', sort: '-start', limit: 50
+      }),
+      restRequest('list', 'AppleHealthRecord', {
+        user: state.USER.id, type: 'BASAL_ENERGY_BURNED',  sort: '-start', limit: 50
+      })
+    ])
+    const sumToday = (items) =>
+      items?.length
+        ? Math.round(items.filter(r => new Date(r.start) >= todayStart).reduce((s, r) => s + (r.value || 0), 0))
+        : null
+
+    const active = sumToday(aRes?.items)
+    const basal  = sumToday(bRes?.items)
+
+    if (active !== null || basal !== null) {
+      hd.CALORIES = { active: active ?? 0, basal: basal ?? 0 }
+    }
+  } catch (e) {
+ }
+
+  // ── Workouts ──────────────────────────────────────────────────────
+  try {
+    const res = await restRequest('list', 'AppleHealthRecord', {
+      user: state.USER.id, type: 'WORKOUT', sort: '-start', limit: 10
+    })
+    if (res?.items?.length) {
+      const fmtTime = start => {
+        const diff = Math.floor((now - new Date(start)) / 86400000)
+        if (diff === 0) return 'Today · ' + new Date(start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+        if (diff === 1) return 'Yesterday'
+        return new Date(start).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      }
+      hd.WORKOUTS = res.items.slice(0, 5).map(w => ({
+        type: w.activityName || 'Workout',
+        kcal: w.calories != null ? Math.round(w.calories) : null,
+        time: fmtTime(w.start)
+      }))
+    } else {
+      hd.WORKOUTS = []
+    }
+  } catch (e) {
+ }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   MESSAGE HANDLING & BOOT SEQUENCE
+   ────────────────────────────────────────────────────────────────
+   BOOT SEQUENCE:
+   1. Listeners registered
+   2. READY_DYNAMIC_MEDIA sent → Cogniss responds with USER (+ others)
+   3. handleMessage() stores all incoming messages into state{}
+   4. Once USER arrives, init() is triggered (REQUIRED set = ['USER'])
+   5. init() runs applyTheme(), loadPrefs(), loadHealthData() in order
+   6. renderAll() draws the UI, loading screen fades out
+
+   IMPORTANT ORDER: Listeners MUST be registered before
+   READY_DYNAMIC_MEDIA is sent. Otherwise Cogniss may send the
+   first batch of messages before the listeners exist and they
+   will be lost — causing the template to hang on the spinner.
+
+   SECONDARY TRIGGERS:
+   • ACTIVITY_RESPONSE arriving after init → re-apply theme
+     (it carries the app ID needed for app-level theme colours)
+   • QUESTIONS arriving after init → reload prefs
+     (state.QUESTIONS needed for the question _id lookup)
+   ════════════════════════════════════════════════════════════════ */
+
+/* ════════════════════════════════════════════════════════════════
+   PULL TO REFRESH
+   ────────────────────────────────────────────────────────────────
+   Detects a downward touch drag from the top of the scroll area.
+   THRESHOLD: 70px of pull triggers the refresh on release.
+   The arrow rotates progressively as the user pulls.
+   Only fires when scrollTop === 0 (already at the top).
+   Does NOT fire inside Cogniss native (touch events work the same
+   but overscroll-behavior-y:none prevents rubber-banding).
+   ════════════════════════════════════════════════════════════════ */
+;(function initPTR() {
+  const THRESHOLD = 70      // px of pull needed to trigger
+  const scrollEl  = document.getElementById('scrollArea')
+  const bar       = document.getElementById('ptrBar')
+  const spin      = document.getElementById('ptrSpin')
+  const arrow     = document.getElementById('ptrArrow')
+  const label     = document.getElementById('ptrLabel')
+
+  let startY    = 0
+  let pulling   = false
+  let triggered = false
+  let refreshing = false
+
+  function onTouchStart(e) {
+    // Only intercept when scrolled to the very top
+    if (scrollEl.scrollTop > 0 || refreshing) return
+    startY  = e.touches[0].clientY
+    pulling = true
+    triggered = false
+  }
+
+  function onTouchMove(e) {
+    if (!pulling || refreshing) return
+    const pull    = Math.max(0, e.touches[0].clientY - startY)
+    if (pull === 0) return
+
+    // Clamp pull distance for visual feedback
+    const clamped = Math.min(pull * 0.55, THRESHOLD * 1.3)
+    const pct     = Math.min(1, clamped / THRESHOLD)
+
+    bar.classList.add('visible')
+    // Rotate arrow from 0° → 180° as user approaches threshold
+    arrow.style.transform = `rotate(${Math.round(pct * 180)}deg)`
+    arrow.style.opacity   = String(0.4 + pct * 0.6)
+
+    if (pct >= 1 && !triggered) {
+      triggered = true
+      label.textContent = 'Release to refresh'
+    } else if (pct < 1 && triggered) {
+      triggered = false
+      label.textContent = 'Pull to refresh'
+    }
+  }
+
+  function onTouchEnd() {
+    if (!pulling) return
+    pulling = false
+    if (triggered && !refreshing) {
+      doRefresh()
+    } else {
+      reset()
+    }
+  }
+
+  async function doRefresh() {
+    refreshing = true
+
+    // Switch to spinner
+    spin.classList.add('active')
+    arrow.style.display = 'none'
+    label.textContent   = 'Refreshing...'
+    bar.classList.add('visible')
+
+    try {
+      // Reset health data and reload
+      hd.STEP_DAY_MAP    = null
+      hd.TODAY_STEPS     = null
+      hd.YESTERDAY_STEPS = null
+      hd.CALORIES        = null
+      hd.WORKOUTS        = null
+      barsAnimated       = false
+
+      await loadHealthData()
+      renderAll()
+    } catch (e) { /* silent — UI already reflects state */ }
+
+    // Brief pause so spinner doesn't flash too fast
+    await new Promise(r => setTimeout(r, 500))
+    refreshing = false
+    reset()
+  }
+
+  function reset() {
+    bar.classList.remove('visible')
+    // Small delay before hiding so the collapse animation is visible
+    setTimeout(() => {
+      spin.classList.remove('active')
+      arrow.style.display   = ''
+      arrow.style.transform = ''
+      arrow.style.opacity   = ''
+      label.textContent     = 'Pull to refresh'
+      triggered             = false
+    }, 230)
+  }
+
+  scrollEl.addEventListener('touchstart', onTouchStart, { passive: true })
+  scrollEl.addEventListener('touchmove',  onTouchMove,  { passive: true })
+  scrollEl.addEventListener('touchend',   onTouchEnd)
+})()
+
+// Only USER is strictly required to boot. CONFIG and ACTIVITY_RESPONSE
+// are optional — they're stored when they arrive but never block startup.
+const REQUIRED = new Set(['USER'])
+const received = new Set()
+
+function handleMessage(msg) {
+  // Route REQUEST_RESPONSE to the pending restRequest promise
+  if (msg.key === 'REQUEST_RESPONSE') {
+    const pending = _pending[msg.id]
+    if (pending) {
+      delete _pending[msg.id]
+      msg.error ? pending.reject(new Error(msg.error)) : pending.resolve(msg.data)
+    }
+    return
+  }
+
+  // Store all messages in state
+  if (REQUIRED.has(msg.key)) {
+    state[msg.key] = msg.data
+    received.add(msg.key)
+  } else {
+    state[msg.key] = msg.data
+  }
+
+  // Re-apply theme when app ID becomes available
+  if (msg.key === 'ACTIVITY_RESPONSE' && window._initStarted) {
+    applyTheme()
+  }
+
+  // Reload prefs when question list becomes available
+  if (msg.key === 'QUESTIONS' && window._initStarted) {
+    loadPrefs().then(() => renderAll())
+  }
+
+  // Boot once all required messages have arrived
+  if (received.size === REQUIRED.size && !window._initStarted) {
+    window._initStarted = true
+    init()
+  }
+}
+
+async function init() {
+  // Set time-based greeting
+  const h         = new Date().getHours()
+  const greetWord = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : h < 21 ? 'Good evening' : 'Good night'
+  document.getElementById('greetMsg').textContent = '👋 ' + greetWord + ','
+
+  // Set user's display name
+  const name = state.USER?.firstName || state.USER?.displayName || state.USER?.name || ''
+  document.getElementById('greetName').textContent = name || 'there'
+
+  // Theme and prefs in parallel (neither blocks the other)
+  applyContrastColor()  // set initial contrast from CSS default --accent
+  await Promise.all([applyTheme(), loadPrefs()])
+
+  // Health data (sequential — prefs must be loaded first so goals are correct)
+  await loadHealthData()
+
+  // Render the UI
+  renderAll()
+
+  // Fade out loading screen
+  const ls = document.getElementById('loadingScreen')
+  ls.classList.add('hidden')
+  setTimeout(() => { ls.style.display = 'none' }, 320)
+}
+
+function onMessage(event) {
+  try {
+    // On web, reject messages from unexpected origins.
+    // We trust: same origin, null (RN WebView), and Cogniss domains.
+    if (event.origin && event.origin !== 'null' && event.origin !== window.location.origin) {
+      const trusted = /cogniss\.com$/.test(event.origin)
+      if (!trusted) return
+    }
+    // Guard: on some iOS RN builds, event.data is already a parsed object
+    const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+    if (!msg || !msg.key) return
+    // Allowlist valid message keys — ignore unexpected message types
+    const VALID_KEYS = new Set([
+      'USER','CONFIG','ACTIVITY','ACTIVITY_RESPONSE','QUESTIONS',
+      'REQUEST_RESPONSE','API','TEMPLATE','USER_ACTIVITY'
+    ])
+    if (!VALID_KEYS.has(msg.key)) return
+    handleMessage(msg)
+  } catch (e) { /* malformed message — ignore */ }
+}
+
+// Register listeners BEFORE sending READY_DYNAMIC_MEDIA
+document.addEventListener('message', onMessage)  // React Native WebView
+window.addEventListener('message',   onMessage)  // Web iframe
+
+// Signal readiness to the Cogniss container
+postToApp('READY_DYNAMIC_MEDIA')
+
+/* ════════════════════════════════════════════════════════════════
+   BROWSER PREVIEW FALLBACK
+   ────────────────────────────────────────────────────────────────
+   When opened directly in a browser (no Cogniss container),
+   the USER message never arrives and _initStarted is never set.
+   After 800ms, show the empty state with a placeholder greeting.
+   This MUST NOT fire inside Cogniss (isNative or parent !== self).
+   ════════════════════════════════════════════════════════════════ */
+if (!isNative && window.parent === window) {
+  setTimeout(() => {
+    if (window._initStarted) return
+    window._initStarted = true
+    const h  = new Date().getHours()
+    const fw = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : h < 21 ? 'Good evening' : 'Good night'
+    document.getElementById('greetMsg').textContent  = '👋 ' + fw + ','
+    document.getElementById('greetName').textContent = 'Nish'
+
+    document.getElementById('loadingScreen').classList.add('hidden')
+    setTimeout(() => { document.getElementById('loadingScreen').style.display = 'none' }, 320)
+    document.getElementById('emptyState').style.display = 'flex'
+  }, 0)
+}
+</script>
+</body>
+</html>
