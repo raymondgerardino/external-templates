@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Drink Recording System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!--
+  ============================================================================
+  DRINK RECORDING SYSTEM — Cogniss External Template
+  Version: v1.3
+  v1.3: Beer & cider uses the app primary colour
+  v1.2: progress bar removed; darker Beer & cider colour
+  v1.1: header title removed; units only shown after submit; category colours
+
+  Flow:   1. What did you drink?  (MULTISELECT — options scored with rounded units)
+          2. How many of each?    (quantity = multiplier per selected drink)
+          3. Check your summary   (edit or submit)
+          4. Record submitted     (Continue → QUIT + LAUNCH_ACTIVITY)
+
+  Cogniss content this template expects (see setup guide):
+    • 1 × MULTISELECT question  — one option per drink.
+        option.text  = "Half pint — 284 ml — 4% ABV"
+        option.label = "<category>_<key>"   e.g. beer_halfpint, wine12_small,
+                       wine6_bottle, spirits_single, other_port, lowno_can500
+        option.score = rounded units (e.g. 1.1)  ← used as the multiplier base
+    • 1 × TEXT question (optional) — receives a readable breakdown of quantities.
+        type TEXT_RESPONSE / SHORT_TEXT / LONG_TEXT
+
+  CONFIG (activity.customConfig) keys:
+    nextActivityId  string   Activity opened by "Continue". Optional.
+    includeToday    boolean  true (default): period = today + previous 6 days.
+                             false: period = the 7 days before today.
+
+  Score: QUIT sends customScore = total units (sum of units × quantity, 1 dp).
+  ============================================================================
+-->
+<style>
+/* ---------------------------------------------------------------------------
+   THEME TOKENS
+   Defaults below are fallbacks only — applyTheme() overwrites them with the
+   App theme (App.theme → Settings.theme fallback) on startup.
+--------------------------------------------------------------------------- */
+:root {
+  --c-primary: #0944DF;          /* app primary → buttons, selection, accents */
+  --c-on-primary: #FFFFFF;       /* label on primary (contrast-checked) */
+  --c-primary-text: #0944DF;     /* primary used as text on white (contrast-checked) */
+  --c-primary-tint: rgba(9, 68, 223, 0.10);
+  --c-primary-tint-strong: rgba(9, 68, 223, 0.16);
+  --c-dark: #1A2238;             /* app dark → body text */
+  --c-muted: rgba(26, 34, 56, 0.70);
+  --c-line: rgba(26, 34, 56, 0.12);
+  --c-bg: #F3F5FA;               /* app light → page background */
+  --c-card: #FFFFFF;             /* fixed white cards */
+  --c-header: #0944DF;           /* app activity header colour */
+  --c-on-header: #FFFFFF;        /* header icon/text (contrast-checked) */
+  --c-error: #B3261E;
+  --c-error-bg: #FDECEA;
+  --c-warn-bg: #FFF4E0;
+  --c-warn-line: #E6B56A;
+  --c-warn-ink: #5A3A05;
+  --radius: 8px;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+  --font: "Montserrat", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --content-max: 640px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ---------------------------------------------------------------------------
+   BASE
+--------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--c-bg);
+  color: var(--c-dark);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;                 /* only .scroll scrolls — no sideways page scroll */
+  /* Disable text selection + copy (also blocked in JS) */
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; }
+:focus-visible { outline: 3px solid var(--c-primary); outline-offset: 2px; }
+/* Headings receive programmatic focus for screen readers only — no ring */
+h1:focus-visible, .modal h2:focus-visible { outline: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------------------------------------------------------------------------
+   APP SHELL: header / scrolling content / action bar / version
+--------------------------------------------------------------------------- */
+.app { height: 100%; display: flex; flex-direction: column; }
+
+/* Activity header — 80px + status-bar safe area. Nav button bottom-right. */
+.act-header {
+  flex: none;
+  height: calc(80px + var(--safe-top));
+  padding: var(--safe-top) 12px 8px 20px;
+  background: var(--c-header);
+  color: var(--c-on-header);
+  display: flex; align-items: flex-end; justify-content: flex-end; gap: 12px;
+}
+.nav-btn { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--c-on-header); flex: none; }
+.nav-btn:focus-visible { outline-color: var(--c-on-header); }
+.nav-btn[hidden] { display: none; }
+
+.scroll { flex: 1; overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+.content { max-width: var(--content-max); margin: 0 auto; padding: 20px 20px 28px; }
+
+.bar { flex: none; background: var(--c-card); box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08); }
+.bar[hidden] { display: none; }
+.bar-in { max-width: var(--content-max); margin: 0 auto; padding: 12px 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.bar-note { flex: 1 1 100%; font-size: 15px; color: var(--c-muted); }
+.bar-note b { color: var(--c-dark); font-weight: 600; }
+
+/* Version — tiny, grey, stuck to the very bottom (above home indicator) */
+.version {
+  flex: none; text-align: center; font-size: 11px; color: #9AA0AA;
+  padding: 2px 0 calc(6px + var(--safe-bottom)); background: var(--c-card);
+}
+.version.on-bg { background: var(--c-bg); }
+
+/* ---------------------------------------------------------------------------
+   BUTTONS — 8px radius, primary fill, contrast-checked label
+--------------------------------------------------------------------------- */
+.btn {
+  min-height: 52px; padding: 0 22px; border-radius: var(--radius);
+  font-weight: 600; font-size: 16px;
+  background: var(--c-primary); color: var(--c-on-primary);
+  border: 2px solid var(--c-primary);
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn.grow { flex: 1; }
+.btn.ghost { background: var(--c-card); color: var(--c-primary-text); border-color: var(--c-primary-text); }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn .spin { width: 18px; height: 18px; border-width: 2px; border-color: currentColor; border-right-color: transparent; }
+
+/* ---------------------------------------------------------------------------
+   TYPE & SHARED BLOCKS
+--------------------------------------------------------------------------- */
+h1 { font-size: 22px; line-height: 1.25; font-weight: 700; margin: 0 0 6px; outline: none; }
+.lede { margin: 0 0 10px; color: var(--c-muted); font-size: 15px; }
+.dateline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 20px; font-size: 14px; color: var(--c-muted); }
+.dateline svg { color: var(--c-primary-text); flex: none; }
+.dateline strong { color: var(--c-dark); font-weight: 600; }
+.card { background: var(--c-card); border-radius: var(--radius); box-shadow: var(--shadow); }
+h2.grp { font-size: 16px; font-weight: 700; margin: 22px 0 10px; display: flex; align-items: center; gap: 8px; }
+.dot { width: 12px; height: 12px; border-radius: 50%; background: var(--cc, var(--c-primary)); flex: none; }
+.panel { border-top: 4px solid var(--cc, var(--c-primary)); }
+.qrow { border-left: 4px solid var(--cc, var(--c-primary)); }
+h2.grp:first-of-type { margin-top: 4px; }
+
+/* ---------------------------------------------------------------------------
+   STEP 1 — category cards (carousel on phone, grid on tablet/web) + options
+--------------------------------------------------------------------------- */
+.car-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.car-label { font-size: 14px; color: var(--c-muted); font-weight: 500; }
+.car-arrows { display: flex; gap: 2px; margin-right: -8px; }
+.arrow { width: 44px; height: 44px; display: grid; place-items: center; color: var(--c-primary-text); border-radius: 50%; }
+.arrow:disabled { opacity: 0.25; cursor: default; }
+.cats {
+  display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory;
+  margin: 0 -20px; padding: 6px 20px 14px; scroll-padding-left: 20px;
+  scrollbar-width: none; overscroll-behavior-x: contain;
+}
+.cats::-webkit-scrollbar { display: none; }
+.cat {
+  position: relative; flex: 0 0 148px; scroll-snap-align: start; min-height: 132px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 14px;
+  text-align: left; background: var(--c-card); border-radius: var(--radius); box-shadow: var(--shadow);
+  border: 2px solid transparent;
+}
+.cat[aria-selected="true"] { border-color: var(--cc, var(--c-primary)); }
+.tile { width: 44px; height: 44px; border-radius: var(--radius); display: grid; place-items: center; background: var(--cc, var(--c-primary)); color: var(--cc-on, var(--c-on-primary)); }
+.cat-name { font-weight: 600; font-size: 15px; line-height: 1.25; }
+.cat-hint { font-size: 13px; color: var(--c-muted); line-height: 1.3; }
+.count { position: absolute; top: 10px; right: 10px; min-width: 26px; height: 26px; padding: 0 8px; border-radius: 13px; background: var(--cc, var(--c-primary)); color: var(--cc-on, var(--c-on-primary)); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+
+/* Wider screens: show every category at once, no carousel */
+@media (min-width: 600px) {
+  .car-head { display: none; }
+  .cats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); overflow: visible; margin: 0 0 6px; padding: 4px 0 12px; }
+  .cat { flex: none; }
+}
+
+.panel { padding: 14px 12px 12px; margin-top: 4px; }
+.panel.enter { animation: grow 0.2s ease-out; }
+@keyframes grow { from { opacity: 0; transform: translateY(-6px); } }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 4px; }
+.panel-head strong { font-size: 17px; }
+.panel-head span { font-size: 13px; color: var(--c-muted); }
+.tabs { display: flex; gap: 6px; margin-top: 12px; padding: 4px; background: var(--c-bg); border-radius: var(--radius); }
+.tab { flex: 1; min-height: 44px; border-radius: 6px; font-weight: 600; font-size: 14px; color: var(--c-muted); display: flex; align-items: center; justify-content: center; gap: 6px; }
+.tab[aria-selected="true"] { background: var(--c-card); color: var(--c-dark); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15); }
+.tab .n { min-width: 20px; height: 20px; border-radius: 10px; background: var(--c-primary); color: var(--c-on-primary); font-size: 12px; display: grid; place-items: center; padding: 0 6px; }
+.opts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.opt {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 10px 12px;
+  border-radius: var(--radius); background: var(--c-bg); text-align: left; border: 2px solid transparent;
+}
+.opt[aria-checked="true"] { background: var(--c-primary-tint); border-color: var(--c-primary); }
+.box { width: 24px; height: 24px; border-radius: 6px; border: 2px solid var(--c-muted); display: grid; place-items: center; flex: none; color: transparent; }
+.opt[aria-checked="true"] .box { background: var(--c-primary); border-color: var(--c-primary); color: var(--c-on-primary); }
+.opt-txt { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.opt-name { font-weight: 600; font-size: 15px; }
+.opt-meta { font-size: 13.5px; color: var(--c-muted); }
+
+/* ---------------------------------------------------------------------------
+   STEP 2 — quantity steppers + sticky running total
+--------------------------------------------------------------------------- */
+.qrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 10px 12px 14px; margin-bottom: 10px; }
+.qrow.zero .qinfo { opacity: 0.5; }
+.qinfo { display: flex; flex-direction: column; min-width: 0; }
+.qname { font-weight: 600; font-size: 15px; }
+.qmeta { font-size: 13.5px; color: var(--c-muted); }
+.stepper { display: flex; align-items: center; gap: 4px; flex: none; }
+.stepper button { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--c-bg); border: 2px solid var(--c-line); }
+.stepper button.plus { background: var(--c-primary); border-color: var(--c-primary); color: var(--c-on-primary); }
+.stepper button:disabled { opacity: 0.35; cursor: default; }
+.stepper output { min-width: 34px; text-align: center; font-weight: 700; font-size: 20px; }
+
+/* ---------------------------------------------------------------------------
+   STEP 3 / 4 — summary list, warning, confirmation
+--------------------------------------------------------------------------- */
+.sum { padding: 4px 16px; }
+.srow { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--c-line); }
+.srow:last-child { border-bottom: 0; }
+.srow .qinfo { flex: 1; }
+.srow .x { text-align: right; flex: none; }
+.srow .x b { display: block; font-size: 17px; }
+.srow .x span { font-size: 13px; color: var(--c-muted); }
+.srow.total-row { font-weight: 700; }
+.srow.total-row .k { flex: 1; font-size: 16px; }
+.srow.total-row .v { font-size: 22px; }
+.srow .k { flex: 1; color: var(--c-muted); }
+.srow .v { font-weight: 700; }
+.note { display: flex; gap: 12px; margin-top: 18px; padding: 14px; border-radius: var(--radius); background: var(--c-warn-bg); border: 1.5px solid var(--c-warn-line); color: var(--c-warn-ink); }
+.note svg { flex: none; margin-top: 1px; }
+.note p { margin: 0; font-size: 14.5px; }
+.note strong { display: block; margin-bottom: 2px; }
+.alert { display: flex; gap: 12px; margin: 0 0 16px; padding: 14px; border-radius: var(--radius); background: var(--c-error-bg); color: var(--c-error); font-size: 14.5px; }
+.alert svg { flex: none; }
+.alert strong { display: block; margin-bottom: 2px; }
+.done { text-align: center; padding-top: 16px; }
+.done .dateline { justify-content: center; }
+.done .sum { text-align: left; }
+.units-hero { display: flex; flex-direction: column; align-items: center; padding: 18px 16px; margin-bottom: 4px; }
+.units-hero span { font-size: 15px; font-weight: 600; color: var(--c-muted); }
+.units-hero strong { font-size: 44px; line-height: 1.1; font-weight: 700; color: var(--c-primary-text); }
+.units-hero small { font-size: 14px; color: var(--c-muted); }
+.done h2.done-h { text-align: left; margin-top: 22px; }
+.badge { width: 88px; height: 88px; margin: 0 auto 18px; border-radius: 50%; background: var(--c-primary); color: var(--c-on-primary); display: grid; place-items: center; box-shadow: var(--shadow); }
+.badge path { stroke-dasharray: 30; animation: draw 0.5s 0.15s ease-out backwards; }
+@keyframes draw { from { stroke-dashoffset: 30; } }
+
+/* ---------------------------------------------------------------------------
+   EMPTY / ERROR STATES
+--------------------------------------------------------------------------- */
+.state { text-align: center; padding: 36px 24px; }
+.state .ico { width: 64px; height: 64px; margin: 0 auto 14px; border-radius: 50%; display: grid; place-items: center; background: var(--c-primary-tint-strong); color: var(--c-primary-text); }
+.state.err .ico { background: var(--c-error-bg); color: var(--c-error); }
+.state h2 { font-size: 18px; margin: 0 0 6px; }
+.state p { margin: 0 auto 18px; color: var(--c-muted); font-size: 15px; max-width: 34ch; }
+
+/* ---------------------------------------------------------------------------
+   LOADING — light skeleton + subtle spinner
+--------------------------------------------------------------------------- */
+.skel { background: linear-gradient(90deg, #E7EAF1 25%, #F2F4F8 37%, #E7EAF1 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; border-radius: var(--radius); }
+@keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+.skel-header { background: #DDE1EA; }
+.spin { width: 26px; height: 26px; border-radius: 50%; border: 3px solid #D5DAE5; border-top-color: #8A93A6; animation: rot 0.8s linear infinite; display: inline-block; }
+@keyframes rot { to { transform: rotate(360deg); } }
+.loading-row { display: flex; align-items: center; justify-content: center; gap: 10px; color: #8A93A6; font-size: 14px; margin-top: 22px; }
+
+/* ---------------------------------------------------------------------------
+   MODAL (pop-up) + TOAST
+--------------------------------------------------------------------------- */
+.backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(10, 15, 30, 0.45); display: flex; align-items: center; justify-content: center; padding: 20px; animation: fade 0.15s ease-out; }
+.backdrop[hidden] { display: none; }
+@keyframes fade { from { opacity: 0; } }
+.modal { width: 100%; max-width: 420px; background: var(--c-card); border-radius: var(--radius); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25); padding: 22px 20px 18px; }
+.modal h2 { margin: 0 0 8px; font-size: 19px; outline: none; }
+.modal p { margin: 0 0 20px; color: var(--c-muted); font-size: 15px; }
+.modal-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.modal-actions .btn { flex: 1 1 140px; }
+.toast { position: fixed; left: 50%; bottom: calc(110px + var(--safe-bottom)); transform: translateX(-50%); z-index: 60; max-width: calc(100% - 40px); background: var(--c-dark); color: #fff; padding: 12px 16px; border-radius: var(--radius); font-size: 14px; box-shadow: var(--shadow); }
+.toast[hidden] { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <!-- Activity header (filled by renderHeader) -->
+  <header class="act-header skel-header" id="header">
+    <button class="nav-btn" id="nav-btn" hidden></button>
+  </header>
+
+  <!-- Scrolling content. Starts with the skeleton loader; replaced on start. -->
+  <main class="scroll" id="scroll">
+    <div class="content" id="view" aria-busy="true">
+      <div class="skeleton" id="skeleton">
+        <div class="skel" style="height:26px;width:62%;margin-bottom:12px"></div>
+        <div class="skel" style="height:16px;width:85%;margin-bottom:22px"></div>
+        <div style="display:flex;gap:10px;margin-bottom:16px">
+          <div class="skel" style="height:120px;flex:1"></div>
+          <div class="skel" style="height:120px;flex:1"></div>
+          <div class="skel" style="height:120px;flex:1"></div>
+        </div>
+        <div class="skel" style="height:60px;margin-bottom:8px"></div>
+        <div class="skel" style="height:60px;margin-bottom:8px"></div>
+        <div class="skel" style="height:60px"></div>
+        <div class="loading-row"><span class="spin" aria-hidden="true"></span><span>Loading your drink record…</span></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Action bar (filled by renderBar) -->
+  <footer class="bar" id="bar" hidden><div class="bar-in" id="bar-in"></div></footer>
+  <div class="version on-bg" id="version">v1.3</div>
+</div>
+
+<!-- Pop-up -->
+<div class="backdrop" id="backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-body">
+    <h2 id="modal-title" tabindex="-1"></h2>
+    <p id="modal-body"></p>
+    <div class="modal-actions" id="modal-actions"></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ==========================================================================
+     1. CONSTANTS
+     ========================================================================== */
+  var VERSION = 'v1.3';
+  var INIT_TIMEOUT_MS = 15000;   // give up waiting for init messages
+  var REST_TIMEOUT_MS = 4000;    // per REST_REQUEST (theme fetch)
+  var ACK_TIMEOUT_MS = 10000;    // wait for container to confirm each saved answer
+  var MAX_QTY = 99;
+
+  // Demo hook: the demo file defines window.DRS_DEMO before this script runs.
+  var DEMO = window.DRS_DEMO || null;
+
+  // Init messages required before rendering (question-answering mode + CONFIG).
+  var REQUIRED = ['API', 'USER', 'AUTH', 'ACTIVITY', 'ACTIVITY_RESPONSE', 'CONFIG', 'QUESTIONS'];
+  var TEXT_TYPES = ['TEXT_RESPONSE', 'SHORT_TEXT', 'LONG_TEXT'];
+
+  /*
+   * Drink categories. An option joins a category by the prefix of its Label
+   * (text before the first "_"), e.g. "wine12_small" → prefix "wine12" → Wine,
+   * tab "12% ABV". Unknown prefixes fall into "Other drinks".
+   * Order here = order on screen (matches the rounded-units reference sheet).
+   * color = category colour (tile, selected border, count badge, dots). The text/icon
+   * colour on it is picked by the contrast checker, so any hex is safe to use.
+   * color: null uses the app's primary colour from the theme.
+   */
+  var CATEGORY_DEFS = [
+    { key: 'beer',    name: 'Beer & cider',     hint: 'Pints, bottles and cans', icon: 'beer',   color: null     , prefixes: ['beer', 'cider'] },
+    { key: 'wine',    name: 'Wine',             hint: 'Glasses and bottles',     icon: 'wine',   color: '#8C2F4B', prefixes: ['wine12', 'wine6', 'wine'],
+      tabs: { wine12: '12% ABV', wine6: '6% ABV' } },
+    { key: 'spirits', name: 'Spirits',          hint: 'Single or double',        icon: 'spirit', color: '#2F6E95', prefixes: ['spirits', 'spirit'] },
+    { key: 'other',   name: 'Other drinks',     hint: 'Port, sherry, premixed',  icon: 'other',  color: '#6B4FA8', prefixes: ['other'] },
+    { key: 'lowno',   name: 'Low & no alcohol', hint: '0.5% ABV',                icon: 'lowno',  color: '#2E7D5B', prefixes: ['lowno', 'low', 'nolow'] }
+  ];
+
+  var ICON = {
+    beer: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4h10l-1 16h-8l-1-16z"/><path d="M16.5 8H19a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-3"/><path d="M6.6 7.5h9.8"/></svg>',
+    wine: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h8c0 5-1 8-4 8s-4-3-4-8z"/><path d="M12 11v9"/><path d="M8.5 20h7"/></svg>',
+    spirit: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h12l-1.5 16h-9L6 4z"/><path d="M6.6 10h10.8"/></svg>',
+    other: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8l-1 7a3 3 0 0 1-6 0L8 4z"/><path d="M12 14v6"/><path d="M9 20h6"/></svg>',
+    lowno: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5h4v3.5l2 3V20a1.5 1.5 0 0 1-1.5 1.5h-5A1.5 1.5 0 0 1 8 20V9l2-3z"/><circle cx="12" cy="15" r="2.3"/></svg>',
+    check: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>',
+    back: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+    close: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    prev: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+    next: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
+    minus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 12h12"/></svg>',
+    plus: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 6v12M6 12h12"/></svg>',
+    cal: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+    warn: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l9 16H3L12 4z"/><path d="M12 10v4"/><path d="M12 17.3v.1"/></svg>',
+    error: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/></svg>',
+    empty: '<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h8c0 5-1 8-4 8s-4-3-4-8z"/><path d="M12 11v9"/><path d="M8.5 20h7"/><path d="M3 3l18 18"/></svg>',
+    big: '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7"/></svg>'
+  };
+
+  /* ==========================================================================
+     2. STATE
+     ========================================================================== */
+  var init = {};              // raw init messages keyed by message.key
+  var ui = {
+    phase: 'loading',         // loading | ready | empty | error
+    errorMsg: '',
+    step: 1,                  // 1 select · 2 quantity · 3 summary · 4 submitted
+    activeCat: null,
+    activeTab: {},            // { categoryKey: tabKey }
+    selected: {},             // { optionId: true }
+    qty: {},                  // { optionId: number }
+    submitting: false,
+    submitError: '',
+    sent: {},                 // { questionIndex: true } — acked responses
+    submitted: false,
+    quitting: false,
+    animPanel: false
+  };
+  var model = {
+    drinks: [],               // parsed options → { id, label, name, meta, units, catKey, tabKey }
+    byId: {},
+    categories: [],           // [{ def, items, tabs:[{key,label}] }]
+    drinkQ: null, drinkQIndex: -1,
+    qtyQ: null, qtyQIndex: -1,
+    period: null,             // { start, end, label }
+    startedAt: Date.now()
+  };
+  var started = false;
+  var hasQuit = false;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var $view = $('view'), $scroll = $('scroll'), $bar = $('bar'), $barIn = $('bar-in');
+
+  /* ==========================================================================
+     3. MESSAGE BRIDGE (web iframe + React Native WebView)
+     ========================================================================== */
+  var isNative = typeof window.ReactNativeWebView !== 'undefined';
+
+  function rawPost(obj) {
+    var text = JSON.stringify(obj);
+    if (DEMO) { DEMO.onPost && DEMO.onPost(obj); return; }
+    if (isNative) window.ReactNativeWebView.postMessage(text);
+    else if (window.parent && window.parent !== window) window.parent.postMessage(text, '*');
+  }
+  function postToApp(key, data) { rawPost({ key: key, data: data === undefined ? null : data }); }
+
+  // REST_REQUEST: fields are top-level in the envelope (not nested under data).
+  var reqSeq = 0, pendingReq = {};
+  function restRequest(method, modelName, data) {
+    return new Promise(function (resolve, reject) {
+      var id = 'req-' + (++reqSeq);
+      var timer = setTimeout(function () { delete pendingReq[id]; reject(new Error('Request timed out')); }, REST_TIMEOUT_MS);
+      pendingReq[id] = { resolve: resolve, reject: reject, timer: timer };
+      rawPost({ key: 'REST_REQUEST', method: method, model: modelName, data: data, id: id, specialParams: null });
+    });
+  }
+
+  // Container replies to each QUESTION_RESPONSE with { correct, score, duration }.
+  // Answers are sent one at a time, so a single pending slot is enough.
+  var pendingAck = null;
+  function sendAnswer(payload) {
+    return new Promise(function (resolve, reject) {
+      var timer = setTimeout(function () { pendingAck = null; reject(new Error('No confirmation from the app')); }, ACK_TIMEOUT_MS);
+      pendingAck = function (data) { clearTimeout(timer); pendingAck = null; resolve(data); };
+      postToApp('QUESTION_RESPONSE', payload);
+      if (DEMO) setTimeout(function () { if (pendingAck) pendingAck({ correct: false, score: 0 }); }, 250);
+    });
+  }
+
+  function handleMessage(msg) {
+    switch (msg.key) {
+      case 'REQUEST_RESPONSE': {
+        var p = pendingReq[msg.id];
+        if (!p) return;
+        clearTimeout(p.timer); delete pendingReq[msg.id];
+        if (msg.error) p.reject(new Error(String(msg.error))); else p.resolve(msg.data);
+        return;
+      }
+      case 'QUESTION_RESPONSE':
+        if (pendingAck) pendingAck(msg.data);
+        return;
+      default:
+        init[msg.key] = msg.data;
+        if (!started && REQUIRED.every(function (k) { return init[k] !== undefined; })) startTemplate();
+    }
+  }
+
+  function onMessage(event) {
+    try {
+      var msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+      if (!msg || !msg.key) return;
+      handleMessage(msg);
+    } catch (e) { /* ignore non-JSON messages */ }
+  }
+  document.addEventListener('message', onMessage); // Android React Native
+  window.addEventListener('message', onMessage);   // iOS React Native + web
+
+  /* ==========================================================================
+     4. COLOUR + CONTRAST HELPERS (WCAG 2.x)
+     ========================================================================== */
+  function parseHex(hex) {
+    if (typeof hex !== 'string') return null;
+    var h = hex.trim().replace('#', '');
+    if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+    if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+    return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+  }
+  function luminance(rgb) {
+    var f = function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(rgb.r) + 0.7152 * f(rgb.g) + 0.0722 * f(rgb.b);
+  }
+  function contrast(a, b) {
+    var la = luminance(parseHex(a)), lb = luminance(parseHex(b));
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+  }
+  // Label colour for a filled background: white when it passes AA (4.5:1),
+  // otherwise black (e.g. a pale primary gets black text).
+  function textOn(bg) {
+    if (contrast(bg, '#FFFFFF') >= 4.5) return '#FFFFFF';
+    return contrast(bg, '#000000') >= contrast(bg, '#FFFFFF') ? '#000000' : '#FFFFFF';
+  }
+  function rgba(hex, a) { var c = parseHex(hex); return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + a + ')'; }
+  function validHex(v) { return parseHex(v) ? v : null; }
+
+  /* ==========================================================================
+     5. THEME — App.theme first, Settings.theme fallback, then CSS variables
+     ========================================================================== */
+  function loadTheme() {
+    var appId = init.ACTIVITY_RESPONSE && init.ACTIVITY_RESPONSE.app;
+    var appReq = appId ? restRequest('get', 'App', appId).then(function (a) { return (a && a.theme) || {}; }) : Promise.resolve({});
+    var setReq = restRequest('list', 'Settings', {}).then(function (r) { return (r && r.items && r.items[0] && r.items[0].theme) || {}; });
+    // Never block the activity on theme: failures fall back to defaults.
+    return Promise.all([appReq.catch(function () { return {}; }), setReq.catch(function () { return {}; })])
+      .then(function (res) {
+        var app = res[0], plat = res[1];
+        return {
+          colors: Object.assign({}, plat.colors, app.colors),
+          activityHeader: app.activityHeader || plat.activityHeader || null,
+          generalBackground: app.generalBackground || plat.generalBackground || null
+        };
+      });
+  }
+
+  function applyTheme(theme) {
+    var root = document.documentElement.style;
+    var c = (theme && theme.colors) || {};
+    var primary = validHex(c.primary) || '#0944DF';
+    var dark = validHex(c.dark) || '#1A2238';
+    var light = validHex(c.light) || (theme && theme.generalBackground && validHex(theme.generalBackground.color)) || '#F3F5FA';
+    var header = (theme && theme.activityHeader && !theme.activityHeader.transparent && validHex(theme.activityHeader.color)) || primary;
+
+    // Text must stay readable on both white cards and the light background.
+    if (contrast(dark, '#FFFFFF') < 4.5 || contrast(dark, light) < 4.5) dark = '#1A1A1A';
+    // If the light colour is too dark to be a background, use a neutral tint.
+    if (contrast(light, '#000000') < 12) light = '#F3F5FA';
+
+    root.setProperty('--c-primary', primary);
+    root.setProperty('--c-on-primary', textOn(primary));
+    root.setProperty('--c-primary-text', contrast(primary, '#FFFFFF') >= 4.5 ? primary : dark);
+    root.setProperty('--c-primary-tint', rgba(primary, 0.10));
+    root.setProperty('--c-primary-tint-strong', rgba(primary, 0.16));
+    root.setProperty('--c-dark', dark);
+    root.setProperty('--c-muted', rgba(dark, 0.72));
+    root.setProperty('--c-line', rgba(dark, 0.12));
+    root.setProperty('--c-bg', light);
+    root.setProperty('--c-header', header);
+    root.setProperty('--c-on-header', textOn(header));
+    $('header').classList.remove('skel-header');
+  }
+
+  /* ==========================================================================
+     6. DATA PARSING
+     ========================================================================== */
+  function stripHtml(html) {
+    var d = document.createElement('div');
+    d.innerHTML = html == null ? '' : String(html);
+    return (d.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
+  }
+  function round1(x) { return Math.round((x + Number.EPSILON) * 10) / 10; }
+  function fmtUnits(x) { x = round1(x); return x % 1 === 0 ? String(x) : x.toFixed(1); }
+  function unitsWord(x) { return round1(x) === 1 ? 'unit' : 'units'; }
+  function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
+
+  function categoryFor(label) {
+    var prefix = String(label || '').toLowerCase().split('_')[0];
+    for (var i = 0; i < CATEGORY_DEFS.length; i++) {
+      var def = CATEGORY_DEFS[i];
+      if (def.prefixes.indexOf(prefix) !== -1) return { def: def, tabKey: def.tabs && def.tabs[prefix] ? prefix : null };
+    }
+    return { def: CATEGORY_DEFS[3], tabKey: null }; // "Other drinks"
+  }
+
+  // Units come from option.score (rounded units). If a score is missing, fall back
+  // to the standard formula ml × ABV% ÷ 1000, rounded to 1 dp, parsed from the text.
+  function unitsFor(option, text) {
+    var s = Number(option.score);
+    if (option.score !== null && option.score !== undefined && option.score !== '' && isFinite(s)) return round1(s);
+    var ml = /(\d+(?:\.\d+)?)\s*ml/i.exec(text), abv = /(\d+(?:\.\d+)?)\s*%/.exec(text);
+    return ml && abv ? round1(parseFloat(ml[1]) * parseFloat(abv[1]) / 1000) : 0;
+  }
+
+  function parseQuestions(questions) {
+    questions = Array.isArray(questions) ? questions : [];
+    model.drinkQIndex = -1; model.qtyQIndex = -1;
+    questions.forEach(function (q, i) {
+      if (!q) return;
+      if (model.drinkQIndex === -1 && q.type === 'MULTISELECT') { model.drinkQ = q; model.drinkQIndex = i; }
+      if (model.qtyQIndex === -1 && TEXT_TYPES.indexOf(q.type) !== -1) { model.qtyQ = q; model.qtyQIndex = i; }
+    });
+    if (!model.drinkQ) return;
+
+    model.drinks = (model.drinkQ.options || []).filter(function (o) { return o && o._id; }).map(function (o) {
+      var text = stripHtml(o.text) || o.label || 'Drink';
+      var parts = text.split(/\s+[—–-]\s+/);           // "Half pint — 284 ml — 4% ABV"
+      var cat = categoryFor(o.label);
+      return {
+        id: o._id, label: o.label || '', full: text,
+        name: parts[0], meta: parts.slice(1).join(', '),
+        units: unitsFor(o, text), catKey: cat.def.key, tabKey: cat.tabKey
+      };
+    });
+    model.byId = {};
+    model.drinks.forEach(function (d) { model.byId[d.id] = d; });
+
+    model.categories = CATEGORY_DEFS.map(function (def) {
+      var items = model.drinks.filter(function (d) { return d.catKey === def.key; });
+      // Tabs only when every item in the category has one (e.g. Wine 12% / 6%).
+      var tabs = [];
+      if (def.tabs && items.length && items.every(function (d) { return d.tabKey; })) {
+        Object.keys(def.tabs).forEach(function (k) {
+          if (items.some(function (d) { return d.tabKey === k; })) tabs.push({ key: k, label: def.tabs[k] });
+        });
+      }
+      return { def: def, items: items, tabs: tabs.length > 1 ? tabs : [] };
+    }).filter(function (c) { return c.items.length; });
+
+    ui.activeCat = model.categories.length ? model.categories[0].def.key : null;
+    model.categories.forEach(function (c) { if (c.tabs.length) ui.activeTab[c.def.key] = c.tabs[0].key; });
+  }
+
+  /* ==========================================================================
+     7. RECORDING PERIOD — from the device date, 7 days back
+     ========================================================================== */
+  var DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function buildPeriod(includeToday) {
+    var now = DEMO && DEMO.today ? new Date(DEMO.today) : new Date();
+    var endOffset = includeToday ? 0 : 1;
+    var end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - endOffset);
+    var start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 6);
+    var f = function (d) { return DOW[d.getDay()] + ' ' + d.getDate() + ' ' + MON[d.getMonth()]; };
+    var iso = function (d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); };
+    return { label: f(start) + ' to ' + f(end), startIso: iso(start), endIso: iso(end), long: f(start) + ' ' + start.getFullYear() + ' to ' + f(end) + ' ' + end.getFullYear() };
+  }
+
+  /* ==========================================================================
+     8. TOTALS
+     ========================================================================== */
+  function chosen(onlyPositive) {
+    return model.drinks.filter(function (d) { return ui.selected[d.id] && (!onlyPositive || (ui.qty[d.id] || 0) > 0); });
+  }
+  function totalDrinks() { return chosen(true).reduce(function (n, d) { return n + ui.qty[d.id]; }, 0); }
+  function totalUnits() { return round1(chosen(true).reduce(function (n, d) { return n + d.units * ui.qty[d.id]; }, 0)); }
+  function countInCat(key) { return chosen(false).filter(function (d) { return d.catKey === key; }).length; }
+
+  /* ==========================================================================
+     9. VIEWS
+     ========================================================================== */
+  function dateLine() {
+    return '<p class="dateline">' + ICON.cal + '<span>Last 7 days:</span><strong>' + esc(model.period.label) + '</strong></p>';
+  }
+  function heading(text, lede) {
+    return '<h1 tabindex="-1">' + esc(text) + '</h1><p class="lede">' + esc(lede) + '</p>' + dateLine();
+  }
+
+  // Inline CSS vars for a category's colour + contrast-checked text/icon colour.
+  // color: null → no override, so the CSS falls back to the app primary colour.
+  function catStyle(def) { return def.color ? ' style="--cc:' + def.color + ';--cc-on:' + textOn(def.color) + '"' : ''; }
+  function defByKey(key) { for (var i = 0; i < CATEGORY_DEFS.length; i++) if (CATEGORY_DEFS[i].key === key) return CATEGORY_DEFS[i]; return CATEGORY_DEFS[3]; }
+
+  /* ---- Step 1: What did you drink? ---- */
+  function optRow(d) {
+    var on = !!ui.selected[d.id];
+    return '<button class="opt" role="checkbox" aria-checked="' + on + '" data-action="toggle" data-id="' + esc(d.id) + '" data-focus="o-' + esc(d.id) + '">' +
+      '<span class="box">' + ICON.check + '</span>' +
+      '<span class="opt-txt"><span class="opt-name">' + esc(d.name) + '</span>' + (d.meta ? '<span class="opt-meta">' + esc(d.meta) + '</span>' : '') + '</span></button>';
+  }
+  function catCard(c) {
+    var n = countInCat(c.def.key), on = ui.activeCat === c.def.key;
+    return '<button class="cat" role="tab" aria-selected="' + on + '" aria-controls="panel" data-action="cat" data-id="' + c.def.key + '" data-focus="c-' + c.def.key + '"' + catStyle(c.def) + '>' +
+      '<span class="tile">' + ICON[c.def.icon] + '</span>' +
+      '<span><span class="cat-name">' + esc(c.def.name) + '</span><br><span class="cat-hint">' + esc(c.def.hint) + '</span></span>' +
+      (n ? '<span class="count" aria-label="' + n + ' selected">' + n + '</span>' : '') + '</button>';
+  }
+  function panel(c) {
+    var items = c.items, tabs = '';
+    if (c.tabs.length) {
+      var activeTab = ui.activeTab[c.def.key];
+      tabs = '<div class="tabs" role="tablist" aria-label="' + esc(c.def.name) + ' strength">' + c.tabs.map(function (t) {
+        var n = items.filter(function (d) { return d.tabKey === t.key && ui.selected[d.id]; }).length;
+        return '<button class="tab" role="tab" aria-selected="' + (t.key === activeTab) + '" data-action="tab" data-id="' + t.key + '" data-focus="t-' + t.key + '">' +
+          esc(t.label) + (n ? '<span class="n">' + n + '</span>' : '') + '</button>';
+      }).join('') + '</div>';
+      items = items.filter(function (d) { return d.tabKey === activeTab; });
+    }
+    return '<div class="card panel' + (ui.animPanel ? ' enter' : '') + '" id="panel" role="tabpanel"' + catStyle(c.def) + '>' +
+      '<div class="panel-head"><strong>' + esc(c.def.name) + '</strong><span>Select all you had</span></div>' +
+      tabs + '<div class="opts">' + items.map(optRow).join('') + '</div></div>';
+  }
+  function viewSelect() {
+    var active = null;
+    model.categories.forEach(function (c) { if (c.def.key === ui.activeCat) active = c; });
+    var title = stripHtml(model.drinkQ.text) || 'What did you drink?';
+    return heading(title, 'Select every drink you had in the last 7 days.') +
+      '<div class="car-head"><span class="car-label">Swipe for more drink types</span><div class="car-arrows">' +
+        '<button class="arrow" data-action="car-prev" aria-label="Previous drink types">' + ICON.prev + '</button>' +
+        '<button class="arrow" data-action="car-next" aria-label="Next drink types">' + ICON.next + '</button></div></div>' +
+      '<div class="cats" id="cats" role="tablist" aria-label="Drink type">' + model.categories.map(catCard).join('') + '</div>' +
+      (active ? panel(active) : '');
+  }
+
+  /* ---- Step 2: How many of each? ---- */
+  function viewQty() {
+    var groups = model.categories.map(function (c) {
+      var items = c.items.filter(function (d) { return ui.selected[d.id]; });
+      if (!items.length) return '';
+      return '<div' + catStyle(c.def) + '><h2 class="grp"><span class="dot"></span>' + esc(c.def.name) + '</h2>' + items.map(function (d) {
+        var q = ui.qty[d.id] || 0;
+        return '<div class="card qrow' + (q === 0 ? ' zero' : '') + '"><div class="qinfo">' +
+          '<span class="qname">' + esc(d.name) + '</span><span class="qmeta">' + esc(d.meta) + '</span></div>' +
+          '<div class="stepper">' +
+            '<button data-action="dec" data-id="' + esc(d.id) + '" data-focus="d-' + esc(d.id) + '" aria-label="One less ' + esc(d.full) + '"' + (q <= 0 ? ' disabled' : '') + '>' + ICON.minus + '</button>' +
+            '<output aria-live="polite">' + q + '</output>' +
+            '<button class="plus" data-action="inc" data-id="' + esc(d.id) + '" data-focus="p-' + esc(d.id) + '" aria-label="One more ' + esc(d.full) + '"' + (q >= MAX_QTY ? ' disabled' : '') + '>' + ICON.plus + '</button>' +
+          '</div></div>';
+      }).join('') + '</div>';
+    }).join('');
+    return heading('How many of each?', 'Add how many you had across the 7 days.') + groups;
+  }
+
+  /* ---- Step 3: Summary ---- */
+  // showUnits: false on the summary (quantities only), true on the confirmation page.
+  function summaryRows(showUnits) {
+    return chosen(true).map(function (d) {
+      var q = ui.qty[d.id], def = defByKey(d.catKey);
+      var sub = [def.name, d.meta].filter(Boolean).join(', ');
+      var right = showUnits
+        ? '<b>' + fmtUnits(d.units * q) + '</b><span>' + q + ' × ' + fmtUnits(d.units) + ' ' + unitsWord(d.units) + '</span>'
+        : '<b>× ' + q + '</b>';
+      return '<div class="srow"' + catStyle(def) + '><span class="dot"></span><div class="qinfo"><span class="qname">' + esc(d.name) + '</span><span class="qmeta">' + esc(sub) + '</span></div>' +
+        '<div class="x">' + right + '</div></div>';
+    }).join('');
+  }
+  function viewSummary() {
+    var alert = ui.submitError ? '<div class="alert" role="alert">' + ICON.error + '<div><strong>Your record wasn’t submitted</strong>' + esc(ui.submitError) + '</div></div>' : '';
+    if (!chosen(true).length) {
+      return heading('Check your summary', 'Review your drinks before you submit.') +
+        emptyState('No drinks to submit', 'Every drink is set to 0. Go back and add how many you had.', '<button class="btn" data-action="goto" data-id="2">Add quantities</button>');
+    }
+    return alert + heading('Check your summary', 'Review your drinks before you submit.') +
+      '<div class="card sum">' + summaryRows(false) +
+        '<div class="srow total-row"><span class="k">Total drinks</span><span class="v">' + totalDrinks() + '</span></div>' +
+      '</div>' +
+      '<div class="note" role="note">' + ICON.warn + '<p><strong>Check before you submit</strong>Once submitted, your record can’t be changed. Use Edit to make changes first.</p></div>';
+  }
+
+  /* ---- Step 4: Confirmation ---- */
+  function viewDone() {
+    return '<div class="done"><div class="badge">' + ICON.big + '</div>' +
+      '<h1 tabindex="-1">Record submitted</h1><p class="lede">Your drinks for the last 7 days have been recorded.</p>' + dateLine() +
+      '<div class="card units-hero"><span>Total units</span><strong>' + fmtUnits(totalUnits()) + '</strong><small>from ' + plural(totalDrinks(), 'drink') + '</small></div>' +
+      '<h2 class="grp done-h">Your units by drink</h2>' +
+      '<div class="card sum">' + summaryRows(true) +
+        '<div class="srow total-row"><span class="k">Total units</span><span class="v">' + fmtUnits(totalUnits()) + '</span></div>' +
+      '</div></div>';
+  }
+
+  /* ---- Empty + error states ---- */
+  function emptyState(title, body, action) {
+    return '<div class="state"><div class="ico">' + ICON.empty + '</div><h2>' + esc(title) + '</h2><p>' + esc(body) + '</p>' + (action || '') + '</div>';
+  }
+  function errorState(title, body) {
+    return '<div class="state err" role="alert"><div class="ico">' + ICON.error + '</div><h2>' + esc(title) + '</h2><p>' + esc(body) + '</p>' +
+      '<button class="btn" data-action="exit">Close activity</button></div>';
+  }
+
+  /* ==========================================================================
+     10. RENDERING
+     ========================================================================== */
+  function renderHeader() {
+    var btn = $('nav-btn');
+    btn.hidden = ui.phase === 'loading';
+    var isBack = ui.phase === 'ready' && (ui.step === 2 || ui.step === 3) && !ui.submitting;
+    btn.innerHTML = isBack ? ICON.back : ICON.close;
+    btn.setAttribute('aria-label', isBack ? 'Back' : 'Close');
+    btn.dataset.action = isBack ? 'back' : 'close';
+    btn.disabled = ui.submitting || ui.quitting;
+  }
+
+  function renderBar() {
+    var h = '';
+    if (ui.phase === 'ready') {
+      if (ui.step === 1) {
+        var n = chosen(false).length;
+        h = '<span class="bar-note">' + (n ? '<b>' + plural(n, 'drink') + '</b> selected' : 'Nothing selected yet') + '</span>' +
+            '<button class="btn grow" data-action="next"' + (n ? '' : ' disabled') + '>Add quantities</button>';
+      } else if (ui.step === 2) {
+        h = '<span class="bar-note" aria-live="polite"><b>' + plural(totalDrinks(), 'drink') + '</b> in total</span>' +
+            '<button class="btn ghost" data-action="back">Back</button>' +
+            '<button class="btn grow" data-action="next"' + (totalDrinks() ? '' : ' disabled') + '>Review summary</button>';
+      } else if (ui.step === 3 && chosen(true).length) {
+        h = '<button class="btn ghost" data-action="back"' + (ui.submitting ? ' disabled' : '') + '>Edit</button>' +
+            '<button class="btn grow" data-action="submit"' + (ui.submitting ? ' disabled' : '') + '>' +
+            (ui.submitting ? '<span class="spin" aria-hidden="true"></span>Submitting…' : (ui.submitError ? 'Try again' : 'Submit record')) + '</button>';
+      } else if (ui.step === 4) {
+        h = '<button class="btn grow" data-action="continue"' + (ui.quitting ? ' disabled' : '') + '>' +
+            (ui.quitting ? '<span class="spin" aria-hidden="true"></span>Continuing…' : 'Continue') + '</button>';
+      }
+    }
+    $barIn.innerHTML = h;
+    $bar.hidden = !h;
+    $('version').classList.toggle('on-bg', !h);
+  }
+
+  function render(resetScroll) {
+    var focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.focus : null;
+    var scrollTop = $scroll.scrollTop;
+    var catsEl = $('cats'), catsLeft = catsEl ? catsEl.scrollLeft : 0;
+
+    var html;
+    if (ui.phase === 'error') html = errorState('This activity couldn’t load', ui.errorMsg);
+    else if (ui.phase === 'empty') html = emptyState('No drinks to record yet', 'This activity has no drink options set up. Ask your app admin to add them, then try again.', '<button class="btn" data-action="exit">Close activity</button>');
+    else html = [null, viewSelect, viewQty, viewSummary, viewDone][ui.step]();
+
+    $view.innerHTML = html;
+    $view.setAttribute('aria-busy', 'false');
+    renderHeader();
+    renderBar();
+    ui.animPanel = false;
+    initCarousel(resetScroll ? 0 : catsLeft);
+
+    if (resetScroll) {
+      $scroll.scrollTop = 0;
+      var h1 = $view.querySelector('h1');
+      if (h1) h1.focus({ preventScroll: true });
+    } else {
+      $scroll.scrollTop = scrollTop;
+      if (focusKey) {
+        var el = document.querySelector('[data-focus="' + focusKey + '"]');
+        if (el && !el.disabled) el.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  // Carousel arrows (phone widths). On ≥600px the cards are a grid and arrows hide.
+  function initCarousel(left) {
+    var c = $('cats');
+    if (!c) return;
+    c.scrollLeft = left;
+    var prev = $view.querySelector('[data-action="car-prev"]'), next = $view.querySelector('[data-action="car-next"]');
+    function update() {
+      var max = c.scrollWidth - c.clientWidth;
+      prev.disabled = c.scrollLeft <= 2;
+      next.disabled = c.scrollLeft >= max - 2;
+    }
+    c.addEventListener('scroll', update, { passive: true });
+    update();
+  }
+
+  /* ==========================================================================
+     11. POP-UPS + TOAST
+     ========================================================================== */
+  var modalReturnFocus = null;
+  function openModal(opts) {
+    modalReturnFocus = document.activeElement;
+    $('modal-title').textContent = opts.title;
+    $('modal-body').textContent = opts.body;
+    $('modal-actions').innerHTML =
+      '<button class="btn ghost" data-modal="cancel">' + esc(opts.cancel || 'Cancel') + '</button>' +
+      '<button class="btn" data-modal="ok">' + esc(opts.confirm) + '</button>';
+    $('modal-actions').onclick = function (e) {
+      var b = e.target.closest('[data-modal]');
+      if (!b) return;
+      closeModal();
+      if (b.dataset.modal === 'ok') opts.onConfirm();
+    };
+    $('backdrop').hidden = false;
+    $('modal-title').focus();
+  }
+  function closeModal() {
+    $('backdrop').hidden = true;
+    if (modalReturnFocus && modalReturnFocus.focus) modalReturnFocus.focus({ preventScroll: true });
+  }
+  $('backdrop').addEventListener('click', function (e) { if (e.target === this) closeModal(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('backdrop').hidden) closeModal(); });
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = $('toast');
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, 3500);
+  }
+
+  /* ==========================================================================
+     12. SUBMISSION + COMPLETION
+     ========================================================================== */
+  // Readable breakdown saved to the optional text question.
+  function buildRecordText() {
+    var lines = ['Drink record: ' + model.period.long + ' (' + model.period.startIso + ' to ' + model.period.endIso + ')'];
+    chosen(true).forEach(function (d) {
+      var q = ui.qty[d.id], cat = categoryFor(d.label).def.name;
+      lines.push(cat + ' | ' + d.full + ' | ' + q + ' x ' + fmtUnits(d.units) + ' = ' + fmtUnits(d.units * q) + ' units');
+    });
+    lines.push('Total: ' + plural(totalDrinks(), 'drink') + ', ' + fmtUnits(totalUnits()) + ' units');
+    return lines.join('\n');
+  }
+
+  function submitRecord() {
+    if (ui.submitting) return;
+    ui.submitting = true; ui.submitError = '';
+    render(false);
+
+    var duration = Math.round((Date.now() - model.startedAt) / 1000);
+    var queue = [{ index: model.drinkQIndex, options: chosen(true).map(function (d) { return { _id: d.id }; }), duration: duration }];
+    if (model.qtyQIndex !== -1) queue.push({ index: model.qtyQIndex, text: buildRecordText(), duration: duration });
+    // Skip anything already confirmed (so "Try again" never double-submits it).
+    queue = queue.filter(function (p) { return !ui.sent[p.index]; });
+
+    queue.reduce(function (chain, payload) {
+      return chain.then(function () {
+        return sendAnswer(payload).then(function () { ui.sent[payload.index] = true; });
+      });
+    }, Promise.resolve()).then(function () {
+      ui.submitting = false; ui.submitted = true; ui.step = 4;
+      render(true);
+    }).catch(function () {
+      ui.submitting = false;
+      ui.submitError = 'The app didn’t confirm your answers were saved. Check your connection, then tap Try again.';
+      render(true);
+    });
+  }
+
+  // QUIT once (guarded), with total units as the score. Optionally open the next activity.
+  function finish(launchNext) {
+    if (hasQuit) return;
+    hasQuit = true; ui.quitting = true;
+    renderBar(); renderHeader();
+    postToApp('QUIT', { completeState: 'COMPLETE', customScore: totalUnits() });
+    var nextId = init.CONFIG && init.CONFIG.nextActivityId;
+    if (launchNext && nextId) setTimeout(function () { postToApp('LAUNCH_ACTIVITY', { id: String(nextId) }); }, 300);
+    if (DEMO) setTimeout(function () {
+      toast('Demo: in the app, Continue completes this activity' + (nextId ? ' and opens the next one.' : '.'));
+      hasQuit = false; ui.quitting = false; renderBar(); renderHeader();
+    }, 400);
+  }
+
+  // Leave before submitting: EXIT without marking complete (nothing has been saved).
+  function exitActivity() { postToApp('EXIT', null); if (DEMO) toast('Demo: in the app, this closes the activity.'); }
+
+  /* ==========================================================================
+     13. EVENTS
+     ========================================================================== */
+  function goStep(n) { ui.step = n; render(true); }
+
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-action]');
+    if (!el || el.disabled) return;
+    var id = el.dataset.id;
+    switch (el.dataset.action) {
+      case 'cat':
+        if (ui.activeCat === id) break;
+        ui.activeCat = id; ui.animPanel = true; render(false);
+        var card = document.querySelector('.cat[aria-selected="true"]');
+        if (card && card.scrollIntoView) card.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' });
+        break;
+      case 'tab':
+        ui.activeTab[ui.activeCat] = id; render(false); break;
+      case 'toggle':
+        if (ui.selected[id]) { delete ui.selected[id]; delete ui.qty[id]; } else ui.selected[id] = true;
+        render(false); break;
+      case 'car-prev': case 'car-next':
+        var c = $('cats');
+        if (c) c.scrollBy({ left: el.dataset.action === 'car-next' ? 160 : -160, behavior: 'smooth' });
+        break;
+      case 'inc': ui.qty[id] = Math.min(MAX_QTY, (ui.qty[id] || 0) + 1); render(false); break;
+      case 'dec': ui.qty[id] = Math.max(0, (ui.qty[id] || 0) - 1); render(false); break;
+      case 'next':
+        if (ui.step === 1) chosen(false).forEach(function (d) { if (ui.qty[d.id] === undefined) ui.qty[d.id] = 1; });
+        goStep(ui.step + 1); break;
+      case 'back': ui.submitError = ''; goStep(ui.step - 1); break;
+      case 'goto': goStep(Number(id)); break;
+      case 'submit':
+        if (ui.submitError) { submitRecord(); break; } // retry skips the pop-up
+        openModal({
+          title: 'Submit your record?',
+          body: 'You’re recording ' + plural(totalDrinks(), 'drink') + ' for ' + model.period.label + '. You can’t change it after submitting.',
+          confirm: 'Submit', cancel: 'Keep editing', onConfirm: submitRecord
+        });
+        break;
+      case 'continue': finish(true); break;
+      case 'close':
+        if (ui.phase !== 'ready') { exitActivity(); break; }
+        if (ui.step === 4) { finish(false); break; }   // already submitted — complete without navigating
+        if (!chosen(false).length) { exitActivity(); break; }
+        openModal({
+          title: 'Leave without submitting?',
+          body: 'Your selections won’t be saved.',
+          confirm: 'Leave', cancel: 'Stay', onConfirm: exitActivity
+        });
+        break;
+      case 'exit': exitActivity(); break;
+    }
+  });
+
+  // Block text selection + copying (CSS user-select handles most cases).
+  ['copy', 'cut', 'selectstart', 'contextmenu'].forEach(function (evt) {
+    document.addEventListener(evt, function (e) { e.preventDefault(); });
+  });
+
+  /* ==========================================================================
+     14. STARTUP
+     ========================================================================== */
+  function fail(msg) {
+    ui.phase = 'error'; ui.errorMsg = msg;
+    render(true);
+  }
+
+  function startTemplate() {
+    if (started) return;
+    started = true;
+    clearTimeout(initTimer);
+    model.startedAt = Date.now();
+
+    var cfg = init.CONFIG || {};
+    model.period = buildPeriod(cfg.includeToday !== false && cfg.includeToday !== 'false');
+
+    var themeP = DEMO ? Promise.resolve(DEMO.theme || {}) : loadTheme();
+    themeP.catch(function () { return {}; }).then(function (theme) {
+      applyTheme(theme);
+      try {
+        parseQuestions(init.QUESTIONS);
+      } catch (err) {
+        postToApp('LOG', { message: 'parseQuestions failed', error: String(err) });
+        return fail('The drink options couldn’t be read. Close the activity and open it again.');
+      }
+      ui.phase = model.drinkQ && model.drinks.length ? 'ready' : 'empty';
+      if (DEMO && DEMO.prefill) {
+        Object.keys(DEMO.prefill).forEach(function (id) { if (model.byId[id]) { ui.selected[id] = true; ui.qty[id] = DEMO.prefill[id]; } });
+      }
+      render(true);
+    });
+  }
+
+  // If the app never sends what we need, show an explicit error instead of a stuck loader.
+  var initTimer = setTimeout(function () {
+    if (started) return;
+    var missing = REQUIRED.filter(function (k) { return init[k] === undefined; });
+    postToApp('LOG', { message: 'Init timeout', missing: missing });
+    fail('The activity didn’t receive its content from the app. Check your connection, close the activity and open it again.');
+  }, INIT_TIMEOUT_MS);
+
+  $('version').textContent = VERSION;
+
+  if (DEMO) {
+    // Demo: load fixtures synchronously so content shows instantly.
+    Object.keys(DEMO.init).forEach(function (k) { init[k] = DEMO.init[k]; });
+    startTemplate();
+  } else {
+    window.addEventListener('load', function () { postToApp('READY_DYNAMIC_MEDIA'); });
+  }
+})();
+</script>
+</body>
+</html>
