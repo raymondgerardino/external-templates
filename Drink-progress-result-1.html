@@ -1,0 +1,1194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Weekly Progress Results</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!--
+  ============================================================================
+  WEEKLY PROGRESS RESULTS — Cogniss External Template (display-only)
+  Version: v1.0
+
+  Screens:  1. Your results  — the most recent weekly drink record
+            2. Your progress — start vs each week, feelings trends, start vs now
+
+  Where the data comes from (all read via REST_REQUEST, nothing is written):
+    • Drink Recording System activities (onboarding "typical week" + weekly)
+        NUMBER_RESPONSE  label "total_units"     → units
+        NUMBER_RESPONSE  label "total_drinks"    → drinks logged
+        TEXT_RESPONSE    label "drink_breakdown" → first line gives the 7-day period
+        ActivityResponse.customScore             → units fallback
+    • Content & Survey activities (weekly check-in, optional onboarding survey)
+        label "drink_free_days" → days without a drink (0–7)
+        label "energy", "mood", "sleep_quality" → rated 1–5
+        Works with NUMBER_RESPONSE / SLIDER (value) or MULTICHOICE (option score,
+        else a number in the option text, else option position 1..n).
+
+  CONFIG (activity.customConfig):
+    start           object   { "drinkRecord": "<id>", "surveys": ["<id>", ...] }
+    weeks           array    [ { "drinkRecord": "<id>", "surveys": ["<id>"] }, ... ]  (week 1 first)
+    guidelineUnits  number   Weekly low-risk guideline. Default 14.
+    ratingMax       number   Top of the feelings scale. Default 5.
+    includeToday    boolean  Matches the Drink Recording System setting; used only
+                             when the period can't be read from the breakdown. Default true.
+    nextActivityId  string   Opened after "Continue". Optional.
+    labels          object   Optional label overrides, e.g. { "drinkFreeDays": "dfd" }.
+    debug           boolean  Shows a debug panel listing what was found. Default false.
+
+  Matching survey attempts to weeks: for each week, the survey attempt closest in
+  date to that week's drink record is used. This works whether each week has its
+  own survey activity or one repeatable survey is shared by every week.
+  ============================================================================
+-->
+<style>
+/* ---------------------------------------------------------------------------
+   THEME TOKENS — fallbacks only. applyTheme() overwrites these with the App
+   theme (App.theme, falling back to Settings.theme).
+   --------------------------------------------------------------------------- */
+:root {
+  --c-primary: #0944DF;      /* app primary — accent, buttons, bars */
+  --c-on-primary: #FFFFFF;   /* label on primary — set by contrast checker */
+  --c-accent-ink: #0944DF;   /* primary darkened if needed for text/icons on white */
+  --c-dark: #0F1B3D;         /* app dark — body text */
+  --c-muted: #4A5878;        /* secondary text, contrast-checked on white */
+  --c-light: #F2F5FB;        /* app light — page background */
+  --c-card: #FFFFFF;         /* cards are always white */
+  --c-header: #0944DF;       /* activity header colour */
+  --c-on-header: #FFFFFF;    /* header button icon — set by contrast checker */
+  --c-tint: #E7EDFC;         /* primary at ~10% on white — callouts */
+  --c-bar-soft: #7E9DEE;     /* earlier weeks in the chart */
+  --c-track: #E2E6EE;        /* empty bar track */
+  --c-guide: #B4580A;        /* guideline marker (fixed amber, 4.9:1 on white) */
+  --c-start: #667089;        /* starting-week bar (neutral grey) */
+  --c-error: #B3261E;
+  --radius: 8px;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.15);   /* 15% opacity card shadow */
+  --header-h: 80px;
+  --font: 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color-scheme: light;
+}
+
+/* ---------------------------------------------------------------------------
+   BASE
+   --------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--c-light);
+  color: var(--c-dark);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+  /* No text selection or copying anywhere */
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+h1, h2, p { margin: 0; }
+button { font-family: inherit; cursor: pointer; }
+svg { display: block; flex: none; }
+:focus-visible { outline: 3px solid var(--c-accent-ink); outline-offset: 2px; }
+h1:focus-visible { outline: none; }   /* headings get focus for screen readers only */
+
+/* Page = header + scrolling content + version pinned to the bottom */
+.app { min-height: 100%; display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------------------
+   ACTIVITY HEADER — 80px + status bar, button bottom-right
+   --------------------------------------------------------------------------- */
+.header {
+  position: sticky; top: 0; z-index: 10;
+  height: calc(var(--header-h) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right, 0px)) 8px max(12px, env(safe-area-inset-left, 0px));
+  background: var(--c-header);
+  display: flex; align-items: flex-end; justify-content: flex-end;
+}
+.hdr-btn {
+  width: 48px; height: 48px; border: 0; border-radius: var(--radius);
+  background: transparent; color: var(--c-on-header);
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.hdr-btn:active { background: rgba(127, 127, 127, 0.18); }
+.hdr-btn:focus-visible { outline-color: var(--c-on-header); }
+
+/* ---------------------------------------------------------------------------
+   CONTENT LAYOUT — single column on phones, wider grid on tablet/web
+   --------------------------------------------------------------------------- */
+.main {
+  flex: 1; width: 100%; max-width: 760px; margin: 0 auto;
+  padding: 20px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px));
+}
+.screen { display: none; flex-direction: column; gap: 16px; }
+.screen.active { display: flex; }
+.screen:not(.active) { display: none !important; }
+.heading { display: flex; flex-direction: column; gap: 4px; padding: 2px 2px 4px; }
+.heading h1 { font-size: 30px; line-height: 1.15; font-weight: 700; letter-spacing: -0.4px; }
+.heading p { font-size: 15px; color: var(--c-muted); font-weight: 500; }
+
+.card {
+  background: var(--c-card); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0;
+}
+.card h2 { font-size: 17px; font-weight: 700; }
+.cardhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.small { font-size: 14px; color: var(--c-muted); }
+.eyebrow { font-size: 14px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--c-muted); }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.wide-pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 720px) {
+  .wide-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .heading h1 { font-size: 34px; }
+}
+
+/* Big number (hero + summary) */
+.big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.big .num { font-size: 60px; line-height: 1.05; font-weight: 700; letter-spacing: -2px; min-width: 2ch; }
+.big .unit { font-size: 20px; font-weight: 600; color: var(--c-muted); }
+.big .unit.ink { color: var(--c-dark); }
+.msg { font-size: 16px; line-height: 1.45; }
+
+/* Guideline gauge */
+.gauge { display: flex; flex-direction: column; gap: 4px; }
+.gauge .lab { position: relative; height: 20px; font-size: 14px; }
+.gauge .lab span { position: absolute; top: 0; white-space: nowrap; }
+.guide-txt { color: var(--c-guide); font-weight: 700; }
+.track { position: relative; height: 14px; border-radius: 7px; background: var(--c-track); margin: 6px 0; }
+.fill { height: 14px; border-radius: 7px; background: var(--c-primary); }
+.marker { position: absolute; top: -6px; width: 3px; height: 26px; margin-left: -1.5px; border-radius: 2px; background: var(--c-guide); }
+
+/* Stat cards */
+.label { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--c-muted); }
+.label svg { color: var(--c-accent-ink); }
+.stat { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.stat b { font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -1px; }
+.stat span { font-size: 15px; color: var(--c-muted); }
+.stat.na b { font-size: 22px; letter-spacing: 0; color: var(--c-muted); }
+@media (max-width: 380px) { .label svg { display: none; } .stat b { font-size: 38px; } }
+
+/* Feelings rows */
+.feel { display: flex; flex-direction: column; gap: 6px; }
+.feel .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.name { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; }
+.name svg { color: var(--c-accent-ink); }
+.val { display: flex; align-items: baseline; gap: 4px; }
+.val b { font-size: 22px; font-weight: 700; }
+.bar { height: 10px; border-radius: 5px; background: var(--c-track); overflow: hidden; }
+.bar > i { display: block; height: 100%; border-radius: 5px; background: var(--c-primary); }
+
+/* Start vs last week bars */
+.cmp { display: flex; flex-direction: column; gap: 6px; }
+.cmp .top { display: flex; justify-content: space-between; gap: 8px; font-size: 15px; }
+.cmp .top span:first-child { color: var(--c-muted); }
+.cmp .top span:last-child { font-weight: 700; }
+.cmp .bar { height: 12px; border-radius: 6px; }
+.callout { display: flex; align-items: center; gap: 10px; background: var(--c-tint); border-radius: var(--radius); padding: 12px 14px; font-size: 15px; line-height: 1.4; }
+.callout svg { color: var(--c-accent-ink); }
+
+/* Notice inside a card when a data source is missing */
+.note { font-size: 15px; color: var(--c-muted); background: var(--c-light); border-radius: var(--radius); padding: 12px 14px; }
+
+/* Units-each-week chart (heights set in JS as % of the plot) */
+.chart { position: relative; height: 190px; }
+.chart .plot { position: absolute; left: 0; right: 0; top: 26px; bottom: 0; }
+.chart .gl { position: absolute; left: 0; right: 0; border-top: 2px dashed var(--c-guide); z-index: 1; }
+.chart .cols { position: absolute; inset: 0; display: grid; gap: 8px; }
+.chart .col { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+.chart .col span { position: absolute; font-size: 14px; font-weight: 600; padding-bottom: 4px; white-space: nowrap; }
+.chart .col i { display: block; width: min(40px, 80%); border-radius: 8px 8px 3px 3px; background: var(--c-bar-soft); }
+.chart .col.start i { background: var(--c-start); }
+.chart .col.last i { background: var(--c-primary); }
+.chart .col.last span { font-weight: 700; }
+.chart .col.empty i { background: transparent; border: 2px dashed var(--c-track); height: 24px; }
+.chart .col.empty span { color: var(--c-muted); font-weight: 500; }
+.xlabels { display: grid; gap: 8px; text-align: center; font-size: 13px; font-weight: 600; color: var(--c-muted); border-top: 1px solid var(--c-track); padding-top: 10px; }
+.xlabels .now { color: var(--c-dark); font-weight: 700; }
+.legend { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 14px; color: var(--c-muted); }
+.legend div { display: flex; align-items: center; gap: 6px; }
+.legend .dash { width: 18px; border-top: 2px dashed var(--c-guide); }
+.legend .sw { width: 12px; height: 12px; border-radius: 3px; background: var(--c-start); }
+
+/* Feelings trend rows with sparklines */
+.trend { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 12px; align-items: center; }
+.trend .t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.trend .v { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.trend .v b { font-size: 24px; font-weight: 700; }
+.spark polyline { stroke: var(--c-primary); stroke-dasharray: 1; stroke-dashoffset: 0; }
+.spark circle { fill: var(--c-primary); transform-box: fill-box; transform-origin: center; }
+.sep { height: 1px; background: var(--c-track); }
+
+/* Start vs now table */
+.tbl { display: grid; grid-template-columns: minmax(0, 1fr) 72px 92px; gap: 8px; align-items: baseline; font-size: 16px; }
+.tbl.head { font-size: 14px; font-weight: 600; color: var(--c-muted); padding-bottom: 6px; border-bottom: 1px solid var(--c-track); }
+.tbl .r { text-align: right; }
+.tbl .old { color: var(--c-muted); }
+.tbl .new { font-weight: 700; }
+
+/* ---------------------------------------------------------------------------
+   BUTTONS — 8px radius, primary fill, label colour from contrast checker
+   --------------------------------------------------------------------------- */
+.actions { display: flex; gap: 12px; margin-top: 4px; flex-wrap: wrap; }
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 52px; padding: 0 22px; border-radius: var(--radius);
+  font-size: 16px; font-weight: 700; text-align: center;
+  border: 2px solid var(--c-primary); flex: 1 1 auto;
+}
+.btn.primary { background: var(--c-primary); color: var(--c-on-primary); }
+.btn.secondary { background: var(--c-card); color: var(--c-accent-ink); border-color: var(--c-accent-ink); flex: 0 1 auto; }
+.btn:active { filter: brightness(0.94); }
+.btn[disabled] { opacity: 0.6; cursor: default; }
+
+/* ---------------------------------------------------------------------------
+   VERSION — tiny, grey, at the very bottom of the page
+   --------------------------------------------------------------------------- */
+.version {
+  text-align: center; font-size: 11px; color: #8A8F99;
+  padding: 12px 0 calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+/* ---------------------------------------------------------------------------
+   SKELETON LOADER + SPINNER
+   --------------------------------------------------------------------------- */
+.skeleton { display: flex; flex-direction: column; gap: 16px; }
+.sk { background: #E6E9EF; border-radius: var(--radius); position: relative; overflow: hidden; }
+.sk::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  transform: translateX(-100%); animation: shimmer 1.4s infinite;
+}
+.sk-h1 { height: 34px; width: 60%; } .sk-p { height: 16px; width: 45%; }
+.sk-hero { height: 210px; } .sk-row { height: 110px; } .sk-card { height: 190px; }
+.spin-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--c-muted); font-size: 14px; padding: 4px 0; }
+.spinner { width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--c-track); border-top-color: var(--c-primary); animation: spin 0.9s linear infinite; }
+@keyframes shimmer { to { transform: translateX(100%); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------------------------------------------------------------------------
+   ERROR / EMPTY STATES
+   --------------------------------------------------------------------------- */
+.state { align-items: center; text-align: center; padding: 28px 20px; gap: 14px; }
+.state .ico { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--c-tint); color: var(--c-accent-ink); }
+.state.error .ico { background: #FCE8E6; color: var(--c-error); }
+.state h1 { font-size: 22px; font-weight: 700; }
+.state p { font-size: 16px; color: var(--c-muted); max-width: 440px; }
+.state .detail { font-size: 13px; color: var(--c-muted); background: var(--c-light); border-radius: var(--radius); padding: 8px 12px; max-width: 100%; overflow-wrap: anywhere; }
+.state .actions { width: 100%; max-width: 360px; justify-content: center; }
+
+/* ---------------------------------------------------------------------------
+   DEBUG PANEL — only when CONFIG.debug is true
+   --------------------------------------------------------------------------- */
+.dbg-btn { position: fixed; left: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 30; min-height: 36px; padding: 0 12px; border-radius: var(--radius); border: 0; background: #1F2430; color: #fff; font-size: 13px; font-weight: 600; }
+.dbg { position: fixed; left: 10px; right: 10px; bottom: calc(54px + env(safe-area-inset-bottom, 0px)); max-height: 55vh; overflow: auto; z-index: 30; background: #1F2430; color: #E8EAF0; border-radius: var(--radius); padding: 10px 12px; font: 12px/1.5 ui-monospace, Menlo, monospace; box-shadow: var(--shadow); }
+.dbg ol { margin: 0; padding-left: 18px; }
+.dbg .w { color: #FFC266; } .dbg .e { color: #FF8A80; }
+
+/* ---------------------------------------------------------------------------
+   MICRO-ANIMATIONS (from the mockup) — replayed when a screen opens
+   --------------------------------------------------------------------------- */
+@keyframes growW { from { width: 0; } }
+@keyframes growH { from { height: 0; } }
+@keyframes drawX { from { transform: scaleX(0); } }
+@keyframes drawLine { from { stroke-dashoffset: 1; } }
+@keyframes pop { from { transform: scale(0); } }
+@keyframes drop { from { opacity: 0; transform: translateY(-10px); } }
+.screen.play .fill { animation: growW .7s cubic-bezier(.2,.7,.2,1) both; }
+.screen.play .marker { animation: drop .4s ease-out .5s both; }
+.screen.play .feel .bar > i, .screen.play .cmp .bar > i { animation: growW .65s cubic-bezier(.2,.7,.2,1) both; animation-delay: calc(var(--i, 0) * 80ms); }
+.screen.play .chart .col:not(.empty) i { animation: growH .65s cubic-bezier(.2,.7,.2,1) both; animation-delay: calc(var(--i, 0) * 70ms); }
+.screen.play .chart .gl { transform-origin: left center; animation: drawX .6s ease-out both; }
+.screen.play .spark polyline { animation: drawLine .8s ease-out both; }
+.screen.play .spark circle { animation: pop .25s cubic-bezier(.3,1.6,.5,1) .55s both; }
+@media (prefers-reduced-motion: reduce) { .screen.play *, .sk::after, .spinner { animation: none !important; } }
+[data-count] { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Activity header: close on screen 1, back on screen 2 -->
+  <header class="header">
+    <button class="hdr-btn" id="hdrBtn" type="button" aria-label="Close">
+      <svg id="icoClose" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      <svg id="icoBack" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M15 5l-7 7 7 7"/></svg>
+    </button>
+  </header>
+
+  <main class="main" id="main">
+
+    <!-- Skeleton loader (hidden once data is rendered) -->
+    <div class="skeleton" id="skeleton" aria-busy="true" aria-label="Loading your results">
+      <div class="sk sk-h1"></div><div class="sk sk-p"></div>
+      <div class="spin-wrap"><span class="spinner" aria-hidden="true"></span>Loading your results…</div>
+      <div class="sk sk-hero"></div>
+      <div class="grid2"><div class="sk sk-row"></div><div class="sk sk-row"></div></div>
+      <div class="sk sk-card"></div>
+    </div>
+
+    <!-- Error / empty state (filled by showState) -->
+    <section class="screen card state" id="state" role="alert"></section>
+
+    <!-- ===================== SCREEN 1: RESULTS ===================== -->
+    <section class="screen" id="results" aria-labelledby="r-title">
+      <div class="heading">
+        <h1 id="r-title" tabindex="-1">Your results</h1>
+        <p id="r-sub"></p>
+      </div>
+
+      <div class="card" style="gap:14px">
+        <div class="eyebrow">Units last week</div>
+        <div class="big"><span class="num" id="r-units" data-count="0">0</span><span class="unit">units</span></div>
+        <div class="gauge">
+          <div class="lab" aria-hidden="true"><span class="guide-txt" id="r-recLabel">Recommended</span></div>
+          <div class="track" role="img" id="r-track"><div class="fill" id="r-fill"></div><div class="marker" id="r-marker"></div></div>
+          <div class="lab" aria-hidden="true">
+            <span style="left:0">0</span>
+            <span id="r-endLabel" style="right:0"></span>
+            <span class="guide-txt" id="r-guideLabel"></span>
+          </div>
+        </div>
+        <p class="msg" id="r-msg"></p>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="label">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10l-1 7a4 4 0 0 1-8 0L7 3z"/><path d="M12 14v7"/><path d="M8.5 21h7"/></svg>
+            <span>Drinks logged</span>
+          </div>
+          <div class="stat" id="r-drinks"></div>
+        </div>
+        <div class="card">
+          <div class="label">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></svg>
+            <span>Drink-free days</span>
+          </div>
+          <div class="stat" id="r-free"></div>
+        </div>
+      </div>
+
+      <div class="wide-pair">
+        <div class="card" style="gap:16px">
+          <div class="cardhead"><h2>How you felt</h2><span class="small" id="r-feelScale"></span></div>
+          <div id="r-feel" style="display:flex;flex-direction:column;gap:16px"></div>
+        </div>
+
+        <div class="card" style="gap:14px">
+          <h2>Compared with when you started</h2>
+          <div id="r-cmp" style="display:flex;flex-direction:column;gap:14px"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn primary" type="button" data-go="progress">See your progress over time
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- ===================== SCREEN 2: PROGRESS ===================== -->
+    <section class="screen" id="progress" aria-labelledby="p-title">
+      <div class="heading">
+        <h1 id="p-title" tabindex="-1">Your progress</h1>
+        <p id="p-sub"></p>
+      </div>
+
+      <div class="card" id="p-summary" style="gap:8px"></div>
+
+      <div class="card" style="gap:14px">
+        <div class="cardhead"><h2>Units each week</h2><span class="small" id="p-chartNote"></span></div>
+        <div class="chart" role="img" id="p-chart">
+          <div class="plot"><div class="gl" id="p-gl"></div><div class="cols" id="p-cols"></div></div>
+        </div>
+        <div class="xlabels" id="p-x"></div>
+        <div class="legend">
+          <div><span class="dash"></span><span id="p-legendGuide"></span></div>
+          <div id="p-legendStart"><span class="sw"></span>Starting week</div>
+        </div>
+      </div>
+
+      <div class="wide-pair">
+        <div class="card" style="gap:14px">
+          <div class="cardhead"><h2>How you've felt</h2><span class="small" id="p-feelScale"></span></div>
+          <div id="p-trends" style="display:flex;flex-direction:column;gap:14px"></div>
+        </div>
+
+        <div class="card" style="gap:12px">
+          <h2>Your drinking, start vs now</h2>
+          <div id="p-table"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn secondary" type="button" data-go="results">Back</button>
+        <button class="btn primary" type="button" id="continueBtn">Continue</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="version" id="version">v1.0</div>
+</div>
+
+<button class="dbg-btn" id="dbgBtn" type="button" hidden>Debug</button>
+<div class="dbg" id="dbg" hidden><ol id="dbgList"></ol></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var VERSION = 'v1.0';
+  var DEMO = window.WPR_DEMO || null;   // demo.html injects pre-filled data here
+  var INIT_TIMEOUT_MS = 15000;           // give up waiting for the app after this
+  var REST_TIMEOUT_MS = 10000;           // per REST_REQUEST
+
+  /* Default question labels. Admins can override any of them with CONFIG.labels. */
+  var DEFAULT_LABELS = {
+    totalUnits: 'total_units',
+    totalDrinks: 'total_drinks',
+    breakdown: 'drink_breakdown',
+    drinkFreeDays: 'drink_free_days',
+    energy: 'energy',
+    mood: 'mood',
+    sleep: 'sleep_quality'
+  };
+
+  /* Feelings shown on both screens, in this order. */
+  var FEELINGS = [
+    { key: 'energy', name: 'Energy', icon: '<path d="M13 3L5 14h6l-1 7 8-11h-6l1-7z"/>' },
+    { key: 'mood', name: 'Mood', icon: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01"/>' },
+    { key: 'sleep', name: 'Sleep quality', icon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>' }
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+  document.getElementById('version').textContent = VERSION;
+
+  /* =========================================================================
+     DEBUG LOG — visible only with CONFIG.debug (or demo ?debug)
+     ========================================================================= */
+  var debug = (function () {
+    var lines = [], on = false;
+    function add(cls, args) {
+      var text = Array.prototype.map.call(args, function (a) { return typeof a === 'string' ? a : JSON.stringify(a); }).join(' ');
+      lines.push({ cls: cls, text: text });
+      if (on) paint();
+    }
+    function paint() {
+      $('dbgList').innerHTML = lines.map(function (l) { return '<li class="' + l.cls + '">' + esc(l.text) + '</li>'; }).join('');
+    }
+    return {
+      enable: function () {
+        on = true; $('dbgBtn').hidden = false; paint();
+        $('dbgBtn').onclick = function () { $('dbg').hidden = !$('dbg').hidden; };
+      },
+      info: function () { add('', arguments); },
+      warn: function () { add('w', arguments); },
+      error: function () { add('e', arguments); }
+    };
+  })();
+
+  /* =========================================================================
+     MESSAGE BRIDGE — web iframe and React Native WebView
+     ========================================================================= */
+  var isNative = typeof window.ReactNativeWebView !== 'undefined';
+
+  function send(text) {
+    if (DEMO) { if (DEMO.onPost) DEMO.onPost(JSON.parse(text)); return; }
+    if (isNative) window.ReactNativeWebView.postMessage(text);
+    else window.parent.postMessage(text, '*');
+  }
+  function postToApp(key, data) { send(JSON.stringify({ key: key, data: data === undefined ? null : data })); }
+
+  // REST_REQUEST — fields at the top level of the envelope (not under "data")
+  var reqId = 0, pending = {};
+  function restRequest(method, model, data) {
+    return new Promise(function (resolve, reject) {
+      var id = 'wpr-' + (++reqId);
+      var timer = setTimeout(function () {
+        delete pending[id];
+        reject(new Error('No reply from the app for ' + model + ' (' + method + ')'));
+      }, REST_TIMEOUT_MS);
+      pending[id] = { resolve: resolve, reject: reject, timer: timer };
+      send(JSON.stringify({ key: 'REST_REQUEST', method: method, model: model, data: data, id: id, specialParams: null }));
+    });
+  }
+
+  var init = {};
+  var REQUIRED = ['API', 'USER', 'AUTH', 'ACTIVITY', 'ACTIVITY_RESPONSE', 'CONFIG'];
+  var started = false;
+
+  function onMessage(event) {
+    var message;
+    try { message = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch (e) { return; }
+    if (!message || !message.key) return;
+
+    if (message.key === 'REQUEST_RESPONSE') {
+      var p = pending[message.id];
+      if (!p) return;
+      clearTimeout(p.timer); delete pending[message.id];
+      if (message.error) p.reject(new Error(typeof message.error === 'string' ? message.error : JSON.stringify(message.error)));
+      else p.resolve(message.data);
+      return;
+    }
+    init[message.key] = message.data;
+    if (!started && REQUIRED.every(function (k) { return init[k] !== undefined; })) {
+      started = true;
+      startTemplate();
+    }
+  }
+  document.addEventListener('message', onMessage);   // Android React Native
+  window.addEventListener('message', onMessage);     // iOS React Native + web
+
+  /* =========================================================================
+     NO TEXT SELECTION / COPYING
+     ========================================================================= */
+  ['copy', 'cut', 'contextmenu', 'selectstart', 'dragstart'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) { e.preventDefault(); });
+  });
+
+  /* =========================================================================
+     COLOUR + CONTRAST HELPERS
+     ========================================================================= */
+  function hexToRgb(hex) {
+    if (typeof hex !== 'string') return null;
+    var h = hex.trim().replace('#', '');
+    if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+    if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  function rgbToHex(rgb) { return '#' + rgb.map(function (v) { return ('0' + Math.round(Math.max(0, Math.min(255, v))).toString(16)).slice(-2); }).join(''); }
+  function luminance(hex) {
+    var rgb = hexToRgb(hex) || [0, 0, 0];
+    var c = rgb.map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+  function contrast(a, b) {
+    var l1 = luminance(a), l2 = luminance(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  }
+  /* Contrast checker: white label if it passes 4.5:1, otherwise black. */
+  function textOn(bg) { return contrast('#FFFFFF', bg) >= 4.5 ? '#FFFFFF' : '#000000'; }
+  /* Mix colour a toward b by t (0..1). */
+  function mix(a, b, t) {
+    var x = hexToRgb(a), y = hexToRgb(b);
+    if (!x || !y) return a;
+    return rgbToHex([0, 1, 2].map(function (i) { return x[i] + (y[i] - x[i]) * t; }));
+  }
+  /* Darken a colour until it reaches the target contrast on a background. */
+  function ensureContrast(fg, bg, target) {
+    var c = fg, i = 0;
+    while (contrast(c, bg) < target && i < 20) { c = mix(c, '#000000', 0.08); i++; }
+    return c;
+  }
+
+  /* =========================================================================
+     THEME — App.theme with Settings.theme fallback
+     ========================================================================= */
+  function loadTheme() {
+    var appId = (init.ACTIVITY_RESPONSE && init.ACTIVITY_RESPONSE.app) || (init.ACTIVITY && init.ACTIVITY.app);
+    var appP = appId ? restRequest('get', 'App', appId).then(function (a) { return (a && a.theme) || {}; }).catch(function (e) { debug.warn('App theme not loaded:', e.message); return {}; }) : Promise.resolve({});
+    var setP = restRequest('list', 'Settings', {}).then(function (r) { return (r && r.items && r.items[0] && r.items[0].theme) || {}; }).catch(function (e) { debug.warn('Platform theme not loaded:', e.message); return {}; });
+    return Promise.all([appP, setP]).then(function (t) {
+      var app = t[0], plat = t[1];
+      return {
+        colors: Object.assign({}, plat.colors, app.colors),
+        activityHeader: app.activityHeader || plat.activityHeader || null
+      };
+    });
+  }
+
+  function applyTheme(theme) {
+    var c = (theme && theme.colors) || {};
+    var root = document.documentElement.style;
+    var primary = hexToRgb(c.primary) ? c.primary : '#0944DF';
+    var dark = hexToRgb(c.dark) ? c.dark : '#0F1B3D';
+    var light = hexToRgb(c.light) ? c.light : '#F2F5FB';
+    // Header: app's activity header colour, else primary (also used when transparent)
+    var hdr = theme && theme.activityHeader;
+    var header = hdr && !hdr.transparent && hexToRgb(hdr.color) ? hdr.color : primary;
+    // Body text must stay readable on white cards
+    var ink = ensureContrast(dark, '#FFFFFF', 7);
+    var muted = mix(ink, '#FFFFFF', 0.3);
+    if (contrast(muted, '#FFFFFF') < 4.5) muted = ensureContrast(muted, '#FFFFFF', 4.5);
+    // If the light colour is too dark for a page background, soften it
+    if (contrast(ink, light) < 4.5) light = mix(light, '#FFFFFF', 0.85);
+
+    root.setProperty('--c-primary', primary);
+    root.setProperty('--c-on-primary', textOn(primary));
+    root.setProperty('--c-accent-ink', ensureContrast(primary, '#FFFFFF', 4.5));
+    root.setProperty('--c-dark', ink);
+    root.setProperty('--c-muted', muted);
+    root.setProperty('--c-light', light);
+    root.setProperty('--c-header', header);
+    root.setProperty('--c-on-header', textOn(header));
+    root.setProperty('--c-tint', mix(primary, '#FFFFFF', 0.9));
+    root.setProperty('--c-bar-soft', mix(primary, '#FFFFFF', 0.45));
+    root.setProperty('--c-track', mix(ink, '#FFFFFF', 0.88));
+    debug.info('Theme — primary ' + primary + ' (label ' + textOn(primary) + '), header ' + header + ' (icon ' + textOn(header) + ')');
+  }
+
+  /* =========================================================================
+     CONFIG
+     ========================================================================= */
+  var cfg = {};
+  function readConfig(raw) {
+    var c = raw || {};
+    // Admin panel may deliver OBJECT fields as JSON strings — accept both
+    ['start', 'weeks', 'labels'].forEach(function (k) {
+      if (typeof c[k] === 'string' && c[k].trim()) {
+        try { c[k] = JSON.parse(c[k]); } catch (e) { debug.error('CONFIG.' + k + ' is not valid JSON'); c[k] = null; }
+      }
+    });
+    var toList = function (v) { return Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []); };
+    var slot = function (s) { s = s || {}; return { drinkRecord: s.drinkRecord || s.drinkRecordId || null, surveys: toList(s.surveys || s.surveyIds) }; };
+    var num = function (v, d) { var n = parseFloat(v); return isFinite(n) && n > 0 ? n : d; };
+    return {
+      start: c.start ? slot(c.start) : null,
+      weeks: Array.isArray(c.weeks) ? c.weeks.map(slot) : [],
+      guideline: num(c.guidelineUnits, 14),
+      ratingMax: num(c.ratingMax, 5),
+      includeToday: c.includeToday !== false && c.includeToday !== 'false',
+      nextActivityId: c.nextActivityId || '',
+      labels: Object.assign({}, DEFAULT_LABELS, (c.labels && typeof c.labels === 'object') ? c.labels : {}),
+      debug: c.debug === true || c.debug === 'true'
+    };
+  }
+
+  /* =========================================================================
+     DATA LOADING
+     1. List completed attempts for every configured activity
+     2. Pick the attempt for each slot (start + each week)
+     3. Load the answers for those attempts and resolve their questions
+     4. Read the metrics by question label
+     ========================================================================= */
+  var questionCache = {};
+
+  function idOf(x) { return x && typeof x === 'object' ? (x._id || x.id) : x; }
+  function dateOf(ar) { var d = new Date(ar && (ar.date || ar.updatedAt || ar.createdAt || ar.endDate)); return isNaN(d) ? null : d; }
+
+  function listAttempts(activityId) {
+    return restRequest('list', 'ActivityResponse', {
+      activity: activityId, user: init.USER && init.USER.id, complete: true, sort: '-date', limit: 50
+    }).then(function (r) {
+      var items = ((r && r.items) || []).filter(function (a) { return a && a.complete !== false && a.id !== (init.ACTIVITY_RESPONSE && init.ACTIVITY_RESPONSE.id); });
+      items.sort(function (a, b) { return (dateOf(b) || 0) - (dateOf(a) || 0); });
+      return items;
+    });
+  }
+
+  function listAnswers(attemptId) {
+    return restRequest('list', 'QuestionResponse', {
+      parentActivityResponse: attemptId, user: init.USER && init.USER.id, limit: 100
+    }).then(function (r) { return (r && r.items) || []; });
+  }
+
+  // Question records give us each answer's label (and option scores/text)
+  function resolveQuestions(answers) {
+    var need = [];
+    answers.forEach(function (qr) {
+      var q = qr.question;
+      if (q && typeof q === 'object' && q.label !== undefined) { questionCache[idOf(q)] = q; return; }
+      var id = idOf(q);
+      if (id && !questionCache[id] && need.indexOf(id) < 0) need.push(id);
+    });
+    return Promise.all(need.map(function (id) {
+      return restRequest('get', 'Question', id).then(function (q) { questionCache[id] = q || {}; })
+        .catch(function (e) { debug.warn('Question ' + id + ' not loaded:', e.message); questionCache[id] = {}; });
+    }));
+  }
+
+  /* Pick the attempt for a slot. Drink records: the latest completed attempt.
+     Surveys: the attempt closest in date to the slot's drink record (anchor).
+     With no anchor, a survey used only by this slot falls back to its latest attempt. */
+  function nearest(attempts, anchor) {
+    var best = null, bestGap = Infinity;
+    attempts.forEach(function (a) {
+      var d = dateOf(a); if (!d) return;
+      var gap = Math.abs(d - anchor);
+      if (gap < bestGap) { best = a; bestGap = gap; }
+    });
+    return best;
+  }
+
+  /* Turn one answer into a number: value → text → chosen option (score, number in text, position). */
+  function numberFrom(qr, q) {
+    var v = qr.value;
+    if (v !== undefined && v !== null && v !== '' && isFinite(parseFloat(v))) return parseFloat(v);
+    if (qr.text !== undefined && qr.text !== null) {
+      var m = String(qr.text).match(/-?\d+(\.\d+)?/);
+      if (m) return parseFloat(m[0]);
+    }
+    var optId = idOf(qr.option) || (Array.isArray(qr.options) && qr.options.length ? idOf(qr.options[0]) : null);
+    if (optId && q && Array.isArray(q.options)) {
+      for (var i = 0; i < q.options.length; i++) {
+        var o = q.options[i];
+        if (idOf(o) === optId) {
+          if (typeof o.score === 'number' && o.score > 0) return o.score;
+          var t = String(o.text || o.label || '').replace(/<[^>]*>/g, '').match(/\d+(\.\d+)?/);
+          if (t) return parseFloat(t[0]);
+          return i + 1;
+        }
+      }
+    }
+    return null;
+  }
+
+  /* Which metric does a question hold? Exact label first, then keywords in label/text. */
+  function metricFor(q, kind) {
+    var L = cfg.labels;
+    var label = String((q && q.label) || '').toLowerCase().trim();
+    var text = String((q && q.text) || '').replace(/<[^>]*>/g, ' ').toLowerCase();
+    var keys = kind === 'drink' ? ['totalUnits', 'totalDrinks', 'breakdown'] : ['drinkFreeDays', 'energy', 'mood', 'sleep'];
+    for (var i = 0; i < keys.length; i++) if (label && label === String(L[keys[i]]).toLowerCase()) return keys[i];
+    var s = label + ' ' + text;
+    if (kind === 'drink') {
+      if (/breakdown/.test(s)) return 'breakdown';
+      if (/unit/.test(label)) return 'totalUnits';
+      if (/drink/.test(label) && !/consumed|breakdown|free/.test(label)) return 'totalDrinks';
+      return null;
+    }
+    if (/free|not drink|without (a )?drink|alcohol-free|sober/.test(s)) return 'drinkFreeDays';
+    if (/energy/.test(s)) return 'energy';
+    if (/mood/.test(s)) return 'mood';
+    if (/sleep/.test(s)) return 'sleep';
+    return null;
+  }
+
+  function readMetrics(answers, kind, into, src) {
+    answers.forEach(function (qr) {
+      var q = questionCache[idOf(qr.question)] || (typeof qr.question === 'object' ? qr.question : {});
+      var key = metricFor(q, kind);
+      if (!key || into[key] !== null && into[key] !== undefined) return;
+      if (key === 'breakdown') { into.breakdown = qr.text || null; return; }
+      var n = numberFrom(qr, q);
+      if (n !== null) { into[key] = n; debug.info(src + ': ' + key + ' = ' + n + ' (label "' + (q.label || '?') + '")'); }
+    });
+  }
+
+  /* Period of a drink record: parsed from the breakdown's first line, else worked out from the date. */
+  function periodOf(rec) {
+    var m = rec.breakdown && String(rec.breakdown).match(/\((\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})\)/);
+    if (m) return { from: new Date(m[1] + 'T12:00:00'), to: new Date(m[2] + 'T12:00:00') };
+    if (!rec.date) return null;
+    var to = new Date(rec.date); to.setHours(12, 0, 0, 0);
+    if (!cfg.includeToday) to.setDate(to.getDate() - 1);
+    var from = new Date(to); from.setDate(from.getDate() - 6);
+    return { from: from, to: to };
+  }
+
+  function emptyRec() { return { units: null, drinks: null, drinkFreeDays: null, energy: null, mood: null, sleep: null, date: null, period: null, breakdown: null }; }
+
+  function loadData() {
+    var slots = (cfg.start ? [{ name: 'Start', s: cfg.start }] : []).concat(cfg.weeks.map(function (s, i) { return { name: 'Week ' + (i + 1), s: s }; }));
+    // How many slots use each survey activity (shared → match by date only)
+    var uses = {};
+    slots.forEach(function (sl) { sl.s.surveys.forEach(function (id) { uses[id] = (uses[id] || 0) + 1; }); });
+
+    var ids = [];
+    slots.forEach(function (sl) { [sl.s.drinkRecord].concat(sl.s.surveys).forEach(function (id) { if (id && ids.indexOf(id) < 0) ids.push(id); }); });
+    var attemptsBy = {};
+
+    return Promise.all(ids.map(function (id) {
+      return listAttempts(id).then(function (a) { attemptsBy[id] = a; debug.info('Activity ' + id + ': ' + a.length + ' completed attempt(s)'); })
+        .catch(function (e) { attemptsBy[id] = []; debug.error('Activity ' + id + ' attempts not loaded:', e.message); throw e; });
+    })).then(function () {
+      // Choose the attempts for every slot
+      var plan = slots.map(function (sl) {
+        var drinkAr = sl.s.drinkRecord ? (attemptsBy[sl.s.drinkRecord] || [])[0] || null : null;
+        var anchor = dateOf(drinkAr);
+        var surveyArs = sl.s.surveys.map(function (id) {
+          var list = attemptsBy[id] || [];
+          if (anchor) return nearest(list, anchor);
+          return uses[id] === 1 ? list[0] || null : null;
+        }).filter(Boolean);
+        return { sl: sl, drinkAr: drinkAr, surveyArs: surveyArs };
+      });
+      // Load the answers for each chosen attempt (once each)
+      var arIds = [];
+      plan.forEach(function (p) { [p.drinkAr].concat(p.surveyArs).forEach(function (ar) { if (ar && arIds.indexOf(ar.id) < 0) arIds.push(ar.id); }); });
+      var answersBy = {};
+      return Promise.all(arIds.map(function (id) { return listAnswers(id).then(function (a) { answersBy[id] = a; }); }))
+        .then(function () {
+          var all = [];
+          Object.keys(answersBy).forEach(function (k) { all = all.concat(answersBy[k]); });
+          return resolveQuestions(all);
+        })
+        .then(function () {
+          return plan.map(function (p) {
+            var rec = emptyRec();
+            if (p.drinkAr) {
+              readMetrics(answersBy[p.drinkAr.id] || [], 'drink', rec, p.sl.name);
+              rec.units = rec.totalUnits !== undefined && rec.totalUnits !== null ? rec.totalUnits : null;
+              rec.drinks = rec.totalDrinks !== undefined ? rec.totalDrinks : null;
+              if (rec.units === null && typeof p.drinkAr.customScore === 'number') { rec.units = p.drinkAr.customScore; debug.info(p.sl.name + ': units from activity score = ' + rec.units); }
+              rec.date = dateOf(p.drinkAr);
+              rec.period = periodOf(rec);
+            }
+            p.surveyArs.forEach(function (ar) { readMetrics(answersBy[ar.id] || [], 'survey', rec, p.sl.name + ' survey'); });
+            if (rec.drinkFreeDays !== null) rec.drinkFreeDays = Math.max(0, Math.min(7, Math.round(rec.drinkFreeDays)));
+            if (p.sl.s.drinkRecord && rec.units === null) debug.warn(p.sl.name + ': no units found' + (p.drinkAr ? ' — check the total_units label' : ' — not logged yet'));
+            return rec;
+          });
+        });
+    }).then(function (recs) {
+      var start = cfg.start ? recs.shift() : null;
+      return buildModel(start, recs);
+    });
+  }
+
+  /* Model shared by the live template and the demo. */
+  function buildModel(start, weeks) {
+    // Accept ISO date strings for the period (used by the demo data)
+    var toDates = function (r) {
+      if (r && r.period && typeof r.period.from === 'string') r.period = { from: new Date(r.period.from + 'T12:00:00'), to: new Date(r.period.to + 'T12:00:00') };
+      return r;
+    };
+    weeks = weeks.map(function (w, i) { w = toDates(Object.assign(emptyRec(), w)); w.n = i + 1; w.logged = w.units !== null && w.units !== undefined; return w; });
+    var latest = -1;
+    weeks.forEach(function (w, i) { if (w.logged) latest = i; });
+    if (start) { start = toDates(Object.assign(emptyRec(), start)); if (start.units === undefined) start.units = null; }
+    return { start: start, weeks: weeks, latest: latest };
+  }
+
+  /* =========================================================================
+     FORMATTING
+     ========================================================================= */
+  var DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function fmtPeriod(p) {
+    if (!p) return '';
+    var a = p.from, b = p.to;
+    var left = DAYS[a.getDay()] + ' ' + a.getDate() + (a.getMonth() !== b.getMonth() ? ' ' + MONTHS[a.getMonth()] : '');
+    return left + ' – ' + DAYS[b.getDay()] + ' ' + b.getDate() + ' ' + MONTHS[b.getMonth()];
+  }
+  function r1(n) { return Math.round(n * 10) / 10; }
+  function fmtUnits(n) { return n === null || n === undefined ? '–' : String(r1(n)); }
+  function fmtNum(n, dec) { return n === null || n === undefined ? '–' : (dec ? n.toFixed(dec) : String(Math.round(n))); }
+  function plural(n, one, many) { return r1(n) === 1 ? one : many; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function icon(paths, size) { return '<svg width="' + (size || 18) + '" height="' + (size || 18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + paths + '</svg>'; }
+  function countAttr(n, dec) { return n === null || n === undefined ? '' : ' data-count="' + n + '"' + (dec ? ' data-dec="' + dec + '"' : ''); }
+  function delta(now, before, unitWord) {
+    var d = r1(now - before);
+    if (d === 0) return 'Same as ' + unitWord;
+    return (d > 0 ? 'Up ' : 'Down ') + Math.abs(d).toFixed(1) + ' on ' + unitWord;
+  }
+
+  /* =========================================================================
+     RENDER — SCREEN 1: RESULTS
+     ========================================================================= */
+  function renderResults(m) {
+    var w = m.weeks[m.latest];
+    var prev = null;
+    for (var i = m.latest - 1; i >= 0; i--) if (m.weeks[i].logged) { prev = m.weeks[i]; break; }
+    var G = cfg.guideline, units = r1(w.units);
+
+    $('r-sub').textContent = 'Week ' + w.n + (w.period ? ' · ' + fmtPeriod(w.period) : '');
+
+    // Hero gauge — scale stretches to whichever is larger, units or guideline
+    var scale = Math.max(units, G) || 1, guidePct = G / scale * 100;
+    setCount($('r-units'), units, units % 1 ? 1 : 0);
+    $('r-fill').style.width = (units / scale * 100) + '%';
+    $('r-marker').style.left = guidePct + '%';
+    place($('r-recLabel'), guidePct); place($('r-guideLabel'), guidePct);
+    $('r-guideLabel').textContent = G;
+    $('r-endLabel').textContent = units;
+    $('r-endLabel').style.display = guidePct > 85 || units < G ? 'none' : '';
+    var diff = r1(Math.abs(units - G));
+    $('r-msg').textContent = units > G
+      ? 'You drank ' + diff + ' ' + plural(diff, 'unit', 'units') + ' more than the ' + G + ' units a week low-risk guideline.'
+      : units < G
+        ? 'You drank ' + diff + ' ' + plural(diff, 'unit', 'units') + ' less than the ' + G + ' units a week low-risk guideline.'
+        : 'You drank exactly the ' + G + ' units a week low-risk guideline.';
+    $('r-track').setAttribute('aria-label', units + ' units last week against the ' + G + '-unit weekly guideline');
+
+    // Stat cards
+    $('r-drinks').className = 'stat' + (w.drinks === null ? ' na' : '');
+    $('r-drinks').innerHTML = w.drinks === null ? '<b>Not recorded</b>' : '<b' + countAttr(w.drinks) + '>' + fmtNum(w.drinks) + '</b><span>' + plural(w.drinks, 'drink', 'drinks') + '</span>';
+    $('r-free').className = 'stat' + (w.drinkFreeDays === null ? ' na' : '');
+    $('r-free').innerHTML = w.drinkFreeDays === null ? '<b>Not answered</b>' : '<b' + countAttr(w.drinkFreeDays) + '>' + w.drinkFreeDays + '</b><span>of 7 days</span>';
+
+    // How you felt — compare with the previous logged week, else the start
+    var max = cfg.ratingMax;
+    $('r-feelScale').textContent = 'Rated out of ' + max;
+    var base = prev || m.start, baseWord = prev ? 'the week before' : 'when you started';
+    var any = false;
+    $('r-feel').innerHTML = FEELINGS.map(function (f, i) {
+      var v = w[f.key];
+      if (v === null) return '<div class="feel"><div class="row"><div class="name">' + icon(f.icon) + f.name + '</div><span class="small">Not answered</span></div></div>';
+      any = true;
+      var b = base && base[f.key] !== null ? base[f.key] : null;
+      return '<div class="feel"><div class="row"><div class="name">' + icon(f.icon) + f.name + '</div>' +
+        '<div class="val"><b' + countAttr(v, 1) + '>' + v.toFixed(1) + '</b><span class="small">/ ' + max + '</span></div></div>' +
+        '<div class="bar"><i style="width:' + Math.min(100, v / max * 100) + '%;--i:' + i + '"></i></div>' +
+        (b !== null ? '<div class="small">' + delta(v, b, baseWord) + '</div>' : '') + '</div>';
+    }).join('');
+    if (!any) $('r-feel').insertAdjacentHTML('afterbegin', '<p class="note">Answer this week\'s check-in to see how you felt.</p>');
+
+    // Compared with when you started
+    var S = m.start && m.start.units !== null ? r1(m.start.units) : null;
+    if (S === null) {
+      $('r-cmp').innerHTML = '<p class="note">Your starting week isn\'t available yet, so we can\'t compare. Complete the onboarding drink record to see this.</p>';
+    } else {
+      var cs = Math.max(S, units) || 1, d = r1(S - units), pct = S ? Math.round(Math.abs(d) / S * 100) : 0;
+      var text = d > 0 ? '<b>' + d + ' fewer ' + plural(d, 'unit', 'units') + '</b> than your starting week, that\u2019s ' + pct + '% lower.'
+        : d < 0 ? '<b>' + (-d) + ' more ' + plural(-d, 'unit', 'units') + '</b> than your starting week, that\u2019s ' + pct + '% higher.'
+          : 'The <b>same number of units</b> as your starting week.';
+      var arrow = d > 0 ? '<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>' : d < 0 ? '<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>' : '<path d="M5 12h14"/>';
+      $('r-cmp').innerHTML =
+        '<div class="cmp"><div class="top"><span>Typical week at the start</span><span>' + S + ' units</span></div>' +
+        '<div class="bar"><i style="width:' + (S / cs * 100) + '%;background:var(--c-start);--i:0"></i></div></div>' +
+        '<div class="cmp"><div class="top"><span>Last week</span><span><span' + countAttr(units, units % 1 ? 1 : 0) + '>' + units + '</span> units</span></div>' +
+        '<div class="bar"><i style="width:' + (units / cs * 100) + '%;--i:1"></i></div></div>' +
+        '<div class="callout">' + icon(arrow, 20) + '<div>' + text + '</div></div>';
+    }
+  }
+
+  // Position a gauge label so it never runs off either edge
+  function place(el, pct) {
+    el.style.left = el.style.right = el.style.transform = '';
+    if (pct > 82) el.style.right = '0';
+    else if (pct < 18) el.style.left = '0';
+    else { el.style.left = pct + '%'; el.style.transform = 'translateX(-50%)'; }
+  }
+
+  /* =========================================================================
+     RENDER — SCREEN 2: PROGRESS
+     ========================================================================= */
+  function renderProgress(m) {
+    var w = m.weeks[m.latest], G = cfg.guideline, units = r1(w.units);
+    var S = m.start && m.start.units !== null ? r1(m.start.units) : null;
+    var loggedCount = m.weeks.filter(function (x) { return x.logged; }).length;
+    $('p-sub').textContent = 'Week by week since you started · ' + loggedCount + ' ' + plural(loggedCount, 'week', 'weeks') + ' logged';
+
+    // Summary
+    if (S === null || S === 0) {
+      $('p-summary').innerHTML = '<div class="eyebrow">Units vs your starting week</div><p class="note">Your starting week isn\'t available yet. Complete the onboarding drink record to see your change.</p>';
+    } else {
+      var d = r1(S - units), pct = Math.round(Math.abs(d) / S * 100);
+      var word = d > 0 ? 'lower' : d < 0 ? 'higher' : 'the same';
+      $('p-summary').innerHTML = '<div class="eyebrow">Units vs your starting week</div>' +
+        '<div class="big">' + (d === 0 ? '' : '<span class="num"' + countAttr(pct) + '>' + pct + '</span><span class="unit ink">%</span>') + '<span class="unit">' + word + '</span></div>' +
+        '<p class="small" style="font-size:15px">You\u2019ve gone from ' + S + ' units in a typical week at the start to ' + units + ' units last week.</p>';
+    }
+
+    // Units each week chart: Start + one column per configured week
+    var cols = (m.start ? [{ lab: 'Start', v: S, cls: 'start' }] : []).concat(m.weeks.map(function (x, i) {
+      return { lab: 'Wk ' + x.n, v: x.logged ? r1(x.units) : null, cls: i === m.latest ? 'last' : '' };
+    }));
+    var top = Math.max(G, Math.max.apply(null, cols.map(function (c) { return c.v || 0; }))) * 1.08 || 1;
+    var tmpl = 'repeat(' + cols.length + ', minmax(0, 1fr))';
+    $('p-cols').style.gridTemplateColumns = tmpl; $('p-x').style.gridTemplateColumns = tmpl;
+    $('p-gl').style.bottom = (G / top * 100) + '%';
+    $('p-cols').innerHTML = cols.map(function (c, i) {
+      if (c.v === null) return '<div class="col empty ' + c.cls + '"><span style="bottom:24px">–</span><i></i></div>';
+      var h = Math.max(2, c.v / top * 100);
+      return '<div class="col ' + c.cls + '"><span style="bottom:' + h + '%"' + countAttr(c.v, c.v % 1 ? 1 : 0) + '>' + c.v + '</span><i style="height:' + h + '%;--i:' + i + '"></i></div>';
+    }).join('');
+    $('p-x').innerHTML = cols.map(function (c) { return '<div class="' + (c.cls === 'last' ? 'now' : '') + '">' + c.lab + '</div>'; }).join('');
+    $('p-chartNote').textContent = 'Wk ' + w.n + ' = last week';
+    $('p-legendGuide').textContent = G + '-unit weekly guideline';
+    $('p-legendStart').hidden = !m.start;
+    $('p-chart').setAttribute('aria-label', 'Units each week: ' + cols.map(function (c) { return c.lab + ' ' + (c.v === null ? 'not logged' : c.v); }).join(', ') + '. Dashed line at the ' + G + '-unit guideline.');
+
+    // How you've felt — sparkline across start + weeks with answers
+    var max = cfg.ratingMax;
+    $('p-feelScale').textContent = 'Rated out of ' + max;
+    var series = (m.start ? [m.start] : []).concat(m.weeks.slice(0, m.latest + 1));
+    $('p-trends').innerHTML = FEELINGS.map(function (f, idx) {
+      var pts = series.map(function (r) { return r[f.key]; });
+      var cur = w[f.key];
+      var first = null; for (var i = 0; i < pts.length; i++) if (pts[i] !== null) { first = { v: pts[i], i: i }; break; }
+      var row = '<div class="trend"><div class="t"><div class="name">' + icon(f.icon) + f.name + '</div><div class="v">';
+      if (cur === null) row += '<span class="small">Not answered last week</span>';
+      else {
+        row += '<b' + countAttr(cur, 1) + '>' + cur.toFixed(1) + '</b>';
+        if (first && pts.filter(function (p) { return p !== null; }).length > 1) {
+          var dd = r1(cur - first.v), since = m.start && first.i === 0 ? 'since start' : 'since week ' + (m.start ? first.i : first.i + 1);
+          row += '<span class="small">' + (dd === 0 ? 'no change ' : (dd > 0 ? 'up ' : 'down ') + Math.abs(dd).toFixed(1) + ' ') + since + '</span>';
+        }
+      }
+      row += '</div></div>' + sparkline(pts, max, f.name) + '</div>';
+      return (idx ? '<div class="sep"></div>' : '') + row;
+    }).join('');
+
+    // Start vs now table
+    var st = m.start || emptyRec();
+    var rows = [['Units', st.units === null ? null : r1(st.units), units], ['Drinks', st.drinks, w.drinks], ['Drink-free days', st.drinkFreeDays, w.drinkFreeDays]];
+    $('p-table').innerHTML = '<div class="tbl head"><div></div><div class="r">Start</div><div class="r">Last week</div></div>' +
+      rows.map(function (r) {
+        return '<div class="tbl" style="margin-top:10px"><div>' + r[0] + '</div><div class="r old">' + fmtUnits(r[1]) + '</div><div class="r new"' + countAttr(r[2], r[2] % 1 ? 1 : 0) + '>' + fmtUnits(r[2]) + '</div></div>';
+      }).join('') +
+      '<p class="small" style="margin-top:12px">\u201cStart\u201d is the typical week you told us about before the programme began.</p>';
+  }
+
+  // Small trend line; gaps (unanswered weeks) are skipped
+  function sparkline(pts, max, name) {
+    var W = 120, H = 40, pad = 6, n = pts.length;
+    var xy = [];
+    // Scale to this line's own range (±0.5) so small changes are visible
+    var vals = pts.filter(function (v) { return v !== null; });
+    var lo = Math.max(0, Math.min.apply(null, vals) - 0.5), hi = Math.min(max, Math.max.apply(null, vals) + 0.5);
+    if (hi - lo < 1) { hi = Math.min(max, lo + 1); lo = Math.max(0, hi - 1); }
+    pts.forEach(function (v, i) {
+      if (v === null) return;
+      var x = n > 1 ? pad + i * (W - pad * 2) / (n - 1) : W / 2;
+      var y = H - pad - ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (H - pad * 2);
+      xy.push([r1(x), r1(y), v]);
+    });
+    if (!xy.length) return '<svg class="spark" width="120" height="40" aria-hidden="true"></svg>';
+    var last = xy[xy.length - 1];
+    var label = name + ': ' + xy.map(function (p) { return p[2].toFixed(1); }).join(', ');
+    return '<svg class="spark" width="120" height="40" viewBox="0 0 120 40" role="img" aria-label="' + esc(label) + '">' +
+      (xy.length > 1 ? '<polyline pathLength="1" points="' + xy.map(function (p) { return p[0] + ',' + p[1]; }).join(' ') + '" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>' : '') +
+      '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="4.5"/></svg>';
+  }
+
+  /* =========================================================================
+     NAVIGATION + ANIMATION
+     ========================================================================= */
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var current = 'results';
+
+  function setCount(el, v, dec) { el.dataset.count = v; if (dec) el.dataset.dec = dec; else delete el.dataset.dec; el.textContent = dec ? v.toFixed(dec) : v; }
+
+  // Numbers count up from 0 (~0.8s, ease-out)
+  function countUp(el) {
+    var target = parseFloat(el.dataset.count), dec = parseInt(el.dataset.dec || '0', 10);
+    if (isNaN(target)) return;
+    var fmt = function (v) { return dec ? v.toFixed(dec) : String(Math.round(v)); };
+    if (el._raf) cancelAnimationFrame(el._raf);
+    if (reduce) { el.textContent = fmt(target); return; }
+    var t0 = performance.now(), T = 800;
+    (function step(now) {
+      var e = now - t0;
+      if (e >= T) { el.textContent = fmt(target); el._raf = null; return; }
+      el.textContent = fmt(target * (1 - Math.pow(1 - e / T, 3)));
+      el._raf = requestAnimationFrame(step);
+    })(t0);
+  }
+
+  function play(id) {
+    var scr = $(id);
+    scr.classList.remove('play'); void scr.offsetWidth; scr.classList.add('play');
+    scr.querySelectorAll('[data-count]').forEach(countUp);
+  }
+
+  function show(id) {
+    current = id;
+    ['results', 'progress', 'state'].forEach(function (s) { $(s).classList.toggle('active', s === id); });
+    // Header: close on the results screen and states, back on progress
+    var back = id === 'progress';
+    $('icoBack').toggleAttribute('hidden', !back); $('icoClose').toggleAttribute('hidden', back);   // SVG has no .hidden property
+    $('hdrBtn').setAttribute('aria-label', back ? 'Back to your results' : 'Close');
+    window.scrollTo(0, 0);
+    if (id !== 'state') { play(id); var h = $(id).querySelector('h1'); if (h) h.focus({ preventScroll: true }); }
+  }
+
+  document.addEventListener('click', function (e) {
+    var go = e.target.closest('[data-go]');
+    if (go) show(go.getAttribute('data-go'));
+  });
+  $('hdrBtn').addEventListener('click', function () {
+    if (current === 'progress') show('results'); else finish(false);
+  });
+  $('continueBtn').addEventListener('click', function () { finish(true); });
+
+  /* =========================================================================
+     COMPLETION — QUIT once, then optionally open the next activity
+     ========================================================================= */
+  var hasQuit = false;
+  function finish(launchNext) {
+    if (hasQuit) return;
+    hasQuit = true;
+    $('continueBtn').disabled = true;
+    postToApp('QUIT', { completeState: 'COMPLETE' });
+    if (launchNext && cfg.nextActivityId) {
+      setTimeout(function () { postToApp('LAUNCH_ACTIVITY', { id: cfg.nextActivityId }); }, 300);
+    }
+  }
+
+  /* =========================================================================
+     STATES — loader, errors, empty
+     ========================================================================= */
+  function hideSkeleton() { $('skeleton').hidden = true; $('skeleton').setAttribute('aria-busy', 'false'); }
+
+  var ICON_ERR = '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/>';
+  var ICON_INFO = '<path d="M7 3h10l-1 7a4 4 0 0 1-8 0L7 3z"/><path d="M12 14v7"/><path d="M8.5 21h7"/>';
+
+  /* opts: { error, title, body, detail, retry } */
+  function showState(opts) {
+    hideSkeleton();
+    var el = $('state');
+    el.className = 'screen card state' + (opts.error ? ' error' : '');
+    el.innerHTML = '<div class="ico">' + icon(opts.error ? ICON_ERR : ICON_INFO, 28) + '</div>' +
+      '<h1>' + esc(opts.title) + '</h1><p>' + esc(opts.body) + '</p>' +
+      (opts.detail ? '<div class="detail">' + esc(opts.detail) + '</div>' : '') +
+      '<div class="actions">' +
+      (opts.retry ? '<button class="btn primary" type="button" id="retryBtn">Try again</button>' : '') +
+      '<button class="btn ' + (opts.retry ? 'secondary' : 'primary') + '" type="button" id="closeStateBtn">Close</button></div>';
+    show('state');
+    if (opts.retry) $('retryBtn').onclick = function () { $('skeleton').hidden = false; $('state').classList.remove('active'); run(); };
+    $('closeStateBtn').onclick = function () { finish(false); };
+  }
+
+  function renderAll(m) {
+    hideSkeleton();
+    if (m.latest < 0) {
+      showState({
+        title: 'No drinks logged yet',
+        body: 'Complete this week\u2019s drink record and your results will appear here.'
+      });
+      return;
+    }
+    renderResults(m);
+    renderProgress(m);
+    show('results');
+  }
+
+  /* =========================================================================
+     STARTUP
+     ========================================================================= */
+  function run() {
+    if (!cfg.weeks.length) {
+      debug.error('CONFIG.weeks is empty');
+      showState({ error: true, title: 'This activity isn\u2019t set up yet', body: 'Your results can\u2019t be shown because no weekly drink records are linked to this activity. Please let your programme team know.', detail: 'Admin: add the "weeks" config with each week\u2019s drinkRecord activity ID.' });
+      return;
+    }
+    loadData().then(renderAll).catch(function (e) {
+      debug.error('Load failed:', e.message);
+      showState({ error: true, title: 'We couldn\u2019t load your results', body: 'Something went wrong while getting your drink records. Check your connection and try again.', detail: e.message, retry: true });
+    });
+  }
+
+  function startTemplate() {
+    cfg = readConfig(init.CONFIG);
+    if (cfg.debug) debug.enable();
+    debug.info('Started ' + VERSION + ' — ' + cfg.weeks.length + ' week(s) configured, start ' + (cfg.start ? 'configured' : 'not configured'));
+    loadTheme().then(applyTheme, function () { applyTheme({}); }).then(run);
+  }
+
+  if (DEMO) {
+    // Demo: no bridge, no loader — render the pre-filled data immediately
+    cfg = readConfig(DEMO.config || {});
+    if (cfg.debug || /debug/.test(location.search)) debug.enable();
+    applyTheme(DEMO.theme || {});
+    renderAll(buildModel(DEMO.start || null, DEMO.weeks || []));
+  } else {
+    window.addEventListener('load', function () { postToApp('READY_DYNAMIC_MEDIA'); });
+    setTimeout(function () {
+      if (started) return;
+      var missing = REQUIRED.filter(function (k) { return init[k] === undefined; });
+      debug.error('Init timed out, missing: ' + missing.join(', '));
+      showState({ error: true, title: 'This activity couldn\u2019t load', body: 'We didn\u2019t hear back from the app. Close this activity and open it again.', detail: 'Missing: ' + missing.join(', ') });
+    }, INIT_TIMEOUT_MS);
+  }
+})();
+</script>
+</body>
+</html>
