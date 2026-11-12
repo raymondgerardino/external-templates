@@ -1,0 +1,1811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Drink Results</title>
+<!--
+  ============================================================================
+  DRINK RESULTS — Cogniss External Template (display-only)
+  Version: v3.1
+  v3.1: exact labels (total_drinks …) always win over keyword fallbacks; fallbacks only use
+        number questions — drinks_selected / drinks_summary no longer become "Total drinks"
+  v3.0: survey answers are split by survey ACTIVITY (via their attempt), so a start check-in
+        and a week 1 survey that share a Topic no longer hide each other's answers
+  v2.9: recommendation body 16px, keeps bold / italic / underline / numbered + bullet lists
+  v2.8: header 80px from 744px wide (iPad mini and up); 114px below that
+  v2.7: header 80px from 1024px wide; 114px below that
+  v2.6: activity header 114px tall (matches the other Cogniss app pages)
+  v2.5: Display Color accent colours (ACCENT_COLOR_1 …) resolved from the App theme;
+        a survey used by one week only always gives its latest answer
+  v2.4: recommendation uses its Display Color (10% tint, theme colour names supported);
+        each week uses its latest survey answer, not the one closest to the drink record
+  v2.3: collapsible = content block; weeks keyed week1…weekN; drink-free days from the
+        weekly drink record; no nextActivityId; content up to 1024px wide
+  v2.2: page headings + descriptions come from 4 TEXT_CONTENT blocks in this activity's Topic
+  v2.1: version label removed from the screen; 40px below the action-bar buttons
+
+  Design source: Figma "Drinkaware-template" › "results template" (node 222:1688).
+  Styles, colours, button states and the Creator font follow the Weekly and
+  Onboarding drink tracker templates — keep the three in step.
+
+  Views (CONFIG.showLastWeekPage):
+    true  (default) → 1. Your results (last week)  →  2. Your progress (week by week)
+    false           → Your progress only, as a standalone page
+
+  Screens:  1. Your results  — the most recent weekly drink record + editable
+                               collapsible recommendation
+            2. Your progress — start vs each week, feelings trends, start vs now
+
+  Where the data comes from (all read via REST_REQUEST, nothing is written):
+    • Drink record activities — onboarding "typical week" + one Weekly Drink Tracker per week
+        NUMBER_RESPONSE  label "total_units"     → units
+        NUMBER_RESPONSE  label "total_drinks"    → drinks logged
+        NUMBER_RESPONSE  label "drink_free_days" → drink-free days (weekly records)
+        TEXT_RESPONSE    "day_1"…"day_7" or "drink_breakdown" → the week's dates
+        ActivityResponse.customScore             → units fallback
+    • Check-in surveys (Content & Survey)
+        Start check-in: "drink_free_days" + "energy", "mood", "sleep_quality" (1–5)
+        Weekly surveys: "energy", "mood", "sleep_quality" only — weekly drink-free days
+        always come from that week's drink record.
+        Ratings work with NUMBER_RESPONSE / SLIDER (value) or MULTICHOICE (option score,
+        else a number in the option text, else option position 1..n).
+    Survey answers: each answer belongs to an attempt, and each attempt to a survey activity,
+    so a week only sees answers from ITS OWN survey activities (sharing a Topic is fine).
+    A survey activity used by one week only → its latest answer. The same survey activity
+    listed for several weeks → the latest answer from that week's drink record up to the
+    next week's drink record (else the latest in the 7 days before it).
+
+  EDITABLE CONTENT (this activity's Topic):
+    TEXT_CONTENT  "page1_heading"      → Page 1 heading      (default "Your results")
+    TEXT_CONTENT  "page1_description"  → Page 1 description  (default "Here’s how your last week went.")
+    TEXT_CONTENT  "page2_heading"      → Page 2 heading      (default "Your progress")
+    TEXT_CONTENT  "page2_description"  → Page 2 description  (default "Week by week since you started.")
+    Collapsible text content block, label "recommendation" → the collapsible in the
+      "Units last week" card: its header and text. Its Display Color sets the background,
+      used at 10% (a theme colour name — Primary, Secondary, Dark, Light, ACCENT_COLOR_1 … — or a hex code).
+      Missing or empty → lorem ipsum on primary at 10%.
+    If none of the four heading labels match, the first four TEXT_CONTENT blocks are used
+    in order. In the standalone view the page 2 heading + description are shown.
+
+  CONFIG (activity.customConfig):
+    start             object   { "drinkRecord": "<id>", "surveys": ["<start check-in id>"] }
+    weeks             object   { "week1": { "drinkRecord": "<id>", "surveys": ["<id>"] }, …, "week6": {…} }
+                               Keyed by week so each ID stays recognisable once filled in.
+                               (An array, week 1 first, still works.)
+    showLastWeekPage  boolean  true = both pages (default); false = week-by-week page only
+    ratingMax         number   Top of the feelings scale. Default 5.
+    includeToday      boolean  Used only when a record's dates can't be read. Default true.
+    labels            object   Optional label overrides, e.g. { "drinkFreeDays": "dfd" }.
+    debug             boolean  Shows a debug panel listing what was found. Default false.
+  ============================================================================
+-->
+<!-- Default font: Lato (the Creator › Style › Font choice is applied on top of this) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link id="font-lato" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap">
+<style>
+/* ===========================================================================
+   1. DESIGN TOKENS
+   Theme-driven values are overwritten at runtime by applyTheme(). Everything
+   else is the Figma variables (same tokens as the drink tracker templates).
+   =========================================================================== */
+:root {
+  /* Theme-driven */
+  --primary: #613ca8;            /* theme/primary */
+  --primary-10: #efebf6;         /* primary/10 — secondary hover, collapsible default */
+  --primary-20: #dfd8ee;         /* primary/20 */
+  --primary-30: #d0c4e5;         /* secondary pressed */
+  --primary-60a: rgba(97, 60, 168, 0.6);   /* focus glow */
+  --primary-hover: #8163b9;      /* primary hover   = primary + 20% white */
+  --primary-pressed: #4e3086;    /* primary pressed = Primary/120 */
+  --on-primary: #ffffff;         /* contrast-checked label */
+  --on-primary-hover: #ffffff;
+  --on-primary-pressed: #ffffff;
+  --accent-ink: #613ca8;         /* primary used as text (falls back to navy if too light) */
+  --text-dark: #0a3c64;          /* text/navy-100 ← app dark colour */
+  --header-bg: #0a3c64;          /* activity header colour */
+  --header-fg: #ffffff;          /* contrast-checked close icon */
+  --bg: #ffffff;                 /* page background ← app light colour */
+  --font: 'Lato', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* Collapsible recommendation (CONFIG can change the background) */
+  --rec-bg: var(--primary-10);
+  --rec-title: #1c1c21;          /* Shades/Black */
+  --rec-body: #383a40;           /* Neutral/700 */
+
+  /* Fixed design tokens */
+  --card: #ffffff;               /* theme/card */
+  --text: #202429;               /* text/160 */
+  --muted: #505966;              /* text/100 */
+  --muted-2: #5c6066;            /* theme/muted */
+  --border-10: #edeef0;
+  --border-30: #cacdd1;
+  --mauve: #f5f5fb;              /* background/mauve */
+  --disabled-bg: #edeef0;
+  --error: #bc0028;              /* negative/120 */
+  --error-bg: #fde5ea;           /* negative/10 */
+
+  --shadow-card: 0 2px 8px rgba(80, 89, 102, 0.2);   /* Elevation/XS */
+  --shadow-stat: 0 2px 4px rgba(80, 89, 102, 0.2);
+  --shadow-bar: 0 -2px 10px rgba(0, 0, 0, 0.08);
+
+  --radius: 8px;
+  --header-h: 114px;            /* phones (below 744px wide) — matches the other Cogniss app pages */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --content-max: 1024px;        /* phones → tablets; 16px side margin always */
+}
+
+/* ===========================================================================
+   2. BASE
+   =========================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: var(--font); font-size: 16px; line-height: 1.5;
+  -webkit-font-smoothing: antialiased; -webkit-text-size-adjust: 100%;
+  overflow-x: hidden;
+  /* No text selection or copying anywhere */
+  -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+h1, h2, p { margin: 0; }
+button { font-family: inherit; cursor: pointer; }
+svg { display: block; flex: none; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+h1:focus-visible { outline: none; }
+.app { min-height: 100%; display: flex; flex-direction: column; }
+
+/* ===========================================================================
+   3. ACTIVITY HEADER — 114px (80px from 744px wide) + status bar, close bottom-right
+   =========================================================================== */
+.header {
+  position: sticky; top: 0; z-index: 10;
+  height: calc(var(--header-h) + var(--safe-top));
+  padding: var(--safe-top) max(12px, env(safe-area-inset-right, 0px)) 8px 12px;
+  background: var(--header-bg);
+  display: flex; align-items: flex-end; justify-content: flex-end;
+}
+/* 744px and wider (iPad mini and up, web): shorter 80px header */
+@media (min-width: 744px) { :root { --header-h: 80px; } }
+.hdr-btn {
+  width: 44px; height: 44px; border: 0; border-radius: 22px; padding: 0;
+  background: transparent; color: var(--header-fg);
+  display: flex; align-items: center; justify-content: center;
+}
+.hdr-btn:active { background: rgba(255, 255, 255, 0.16); }
+.hdr-btn:focus-visible { outline-color: var(--header-fg); }
+
+/* ===========================================================================
+   4. LAYOUT
+   =========================================================================== */
+.main {
+  flex: 1; width: 100%; max-width: var(--content-max); margin: 0 auto;
+  padding: 40px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px));
+}
+.screen { display: none; flex-direction: column; gap: 28px; }
+.screen.active { display: flex; }
+.screen:not(.active) { display: none !important; }
+#progress.screen { gap: 20px; }
+.stack { display: flex; flex-direction: column; gap: 24px; }
+#progress .stack { gap: 20px; }
+
+.heading { display: flex; flex-direction: column; gap: 6px; }
+.heading h1 { font-size: 22px; line-height: 24px; font-weight: 700; color: var(--text-dark); }
+.lede { font-size: 16px; line-height: 24px; color: var(--text); white-space: pre-line; overflow-wrap: anywhere; }
+.heading h1 { overflow-wrap: anywhere; }
+
+/* Dateline: period on the left, week number on the right */
+.dateline { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.dateline .when { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dateline strong { font-size: 16px; line-height: 20px; font-weight: 700; color: var(--text-dark); }
+.dateline .wk { font-size: 14px; color: var(--muted-2); white-space: nowrap; }
+
+/* Cards */
+.card {
+  background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow-card);
+  padding: 16px; display: flex; flex-direction: column; gap: 16px; min-width: 0;
+}
+.h3 { font-size: 18px; line-height: 24px; font-weight: 700; color: var(--text-dark); }
+.h3.ink { color: var(--text); }
+.cardhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.cardhead .h3 { flex: 1; min-width: 0; }
+.cardhead .aside { white-space: nowrap; }
+.aside { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+.big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.big .num { font-size: 28px; line-height: 34px; font-weight: 700; color: var(--text-dark); font-variant-numeric: tabular-nums; }
+.big .unit { font-size: 16px; line-height: 24px; color: var(--muted-2); }
+.note { font-size: 14px; line-height: 20px; color: var(--muted); background: var(--mauve); border-radius: var(--radius); padding: 12px 14px; }
+
+/* ===========================================================================
+   5. COLLAPSIBLE RECOMMENDATION (content-survey-collapsible, round style)
+   =========================================================================== */
+.rec { background: var(--rec-bg); border-radius: 5px; padding: 16px; }
+.rec-head {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: none; border: 0; padding: 0; text-align: left; color: var(--rec-title);
+  border-radius: 4px; min-height: 24px;
+}
+.rec-title { flex: 1; font-size: 16px; line-height: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.rec-chev { transition: transform .2s ease; }
+.rec.closed .rec-chev { transform: rotate(180deg); }
+.rec-wrap { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .25s ease; }
+.rec.closed .rec-wrap { grid-template-rows: 0fr; }
+.rec-inner { overflow: hidden; }
+.rec-body { padding-top: 16px; font-size: 16px; line-height: 24px; color: var(--rec-body); overflow-wrap: anywhere; }
+/* Rich text from the Creator editor: paragraphs, bold, italic, underline, lists.
+   Headings are shown at body size (bold) — heading sizes are ignored on purpose. */
+.rec-body p { margin: 0 0 8px; }
+.rec-body ul, .rec-body ol { margin: 0 0 8px; padding-left: 24px; }
+.rec-body li { margin: 4px 0; padding-left: 2px; }
+.rec-body > :last-child { margin-bottom: 0; }
+.rec-body strong { font-weight: 700; }
+.rec-body em { font-style: italic; }
+
+/* ===========================================================================
+   6. RESULTS PAGE
+   =========================================================================== */
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.stat {
+  background: var(--card); border: 1px solid var(--border-10); border-radius: var(--radius);
+  box-shadow: var(--shadow-stat); padding: 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.stat-label { display: flex; align-items: center; gap: 4px; font-size: 14px; line-height: 18px; font-weight: 700; color: var(--text-dark); }
+.stat-value { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.stat-value b { font-size: 22px; line-height: 24px; font-weight: 700; color: var(--text-dark); }
+.stat-value span { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+.stat-value.na b { font-size: 16px; color: var(--muted); }
+
+.feelings { display: flex; flex-direction: column; gap: 24px; }
+.feel { display: flex; flex-direction: column; gap: 6px; }
+.feel-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.feel-name { display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 18px; font-weight: 700; color: var(--text); }
+.score { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.score b { font-size: 18px; line-height: 24px; font-weight: 700; color: var(--text-dark); }
+.score span { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--accent-ink); }
+.score.na span { color: var(--muted); }
+.bar { height: 10px; border-radius: 5px; background: var(--border-10); overflow: hidden; }
+.bar > i { display: block; height: 100%; border-radius: 5px; background: var(--primary); }
+
+/* ===========================================================================
+   7. PROGRESS PAGE
+   =========================================================================== */
+.chart-card { background: var(--card); border-radius: var(--radius); padding: 8px; display: flex; flex-direction: column; gap: 16px; }
+.plot { display: grid; gap: 6px; height: 190px; align-items: end; }
+.col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; height: 100%; min-width: 0; }
+.col .val { font-size: 14px; line-height: 18px; font-weight: 700; color: var(--text); background: var(--card); padding: 0 3px; border-radius: 3px; white-space: nowrap; }
+.col .b { width: min(32px, 90%); border-radius: 6px 6px 3px 3px; background: var(--primary); }
+@media (min-width: 600px) { .col .b { width: min(56px, 70%); } .plot { height: 220px; } }
+.col.start .b { background: var(--text-dark); }
+.col.empty .val { font-weight: 400; color: var(--muted); }
+.col.empty .b { height: 24px; background: transparent; border: 2px dashed var(--border-30); border-radius: 6px; }
+.xlabels { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid var(--border-10); text-align: center; font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); white-space: nowrap; }
+.xlabels .now { font-weight: 700; color: var(--text); }
+@media (max-width: 360px) { .plot, .xlabels { gap: 4px; } .xlabels, .col .val { font-size: 12px; letter-spacing: 0; } }
+.legend { display: flex; align-items: center; gap: 6px; font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+.legend i { width: 12px; height: 12px; border-radius: 3px; background: var(--text-dark); }
+
+.summary { background: var(--mauve); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+.summary .big .unit { color: var(--muted); }
+.summary p { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+
+.trends { gap: 14px; }
+.trend { display: flex; flex-direction: column; gap: 4px; }
+.trend-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.trend-row .chg { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+.spark polyline { stroke: var(--primary); }
+.spark circle { fill: var(--primary); }
+.divider { height: 1px; background: var(--border-10); }
+
+.tbl-card { gap: 10px; }
+.tbl { display: grid; grid-template-columns: minmax(0, 1fr) 72px 92px; gap: 8px; align-items: baseline; }
+.tbl.head { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); padding-bottom: 8px; border-bottom: 1px solid var(--border-10); }
+.tbl .r { text-align: right; }
+.tbl .lab { font-size: 16px; line-height: 20px; font-weight: 700; color: var(--text); }
+.tbl .old { font-size: 16px; line-height: 24px; color: var(--muted); }
+.tbl .new { font-size: 16px; line-height: 20px; font-weight: 700; color: var(--text); }
+.footnote { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+
+/* ===========================================================================
+   8. ACTION BAR + BUTTONS (same states as the drink tracker templates)
+   =========================================================================== */
+.actionbar {
+  position: sticky; bottom: 0; z-index: 5; background: var(--card); box-shadow: var(--shadow-bar);
+  /* 40px from the bottom of the buttons to the bottom edge of the screen (Figma);
+     also clears the iPhone home indicator */
+  padding: 12px max(16px, env(safe-area-inset-right, 0px)) max(40px, calc(var(--safe-bottom) + 8px)) max(16px, env(safe-area-inset-left, 0px));
+}
+.actions { display: flex; gap: 12px; max-width: calc(var(--content-max) - 32px); margin: 0 auto; }
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 48px; padding: 12px 32px; border-radius: 96px; border: 2px solid transparent;
+  font-size: 16px; line-height: 24px; font-weight: 400; text-align: center; flex: 1 1 auto;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.btn-primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.btn-secondary { background: var(--card); border-color: var(--primary); color: var(--accent-ink); flex: 0 0 144px; }
+@media (max-width: 340px) { .btn { padding: 12px 20px; } .btn-secondary { flex-basis: 112px; } }
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--on-primary-hover); }
+  .btn-secondary:hover:not(:disabled) { background: var(--primary-10); border-color: transparent; }
+}
+.btn-primary:active:not(:disabled) { background: var(--primary-pressed); border-color: var(--primary-pressed); color: var(--on-primary-pressed); }
+.btn-secondary:active:not(:disabled) { background: var(--primary-30); border-color: transparent; }
+/* Focus (keyboard): white inner ring + primary glow, as in Figma › Button › Focus */
+.btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px #fff, 0 0 8px var(--primary-60a); }
+.btn-primary:focus-visible { background: var(--primary-hover); border-color: var(--primary-hover); color: var(--on-primary-hover); }
+.btn-secondary:focus-visible { background: var(--primary-10); border-color: transparent; }
+.btn:disabled { cursor: default; color: var(--muted); }
+.btn-primary:disabled { background: var(--disabled-bg); border-color: var(--disabled-bg); }
+.btn-secondary:disabled { background: var(--card); border-color: var(--disabled-bg); }
+
+
+/* ===========================================================================
+   9. LOADING, ERROR AND EMPTY STATES
+   =========================================================================== */
+.skeleton { display: flex; flex-direction: column; gap: 20px; }
+.sk { background: var(--border-10); border-radius: var(--radius); position: relative; overflow: hidden; }
+.sk::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.6), transparent); transform: translateX(-100%); animation: shimmer 1.4s infinite; }
+.sk-h1 { height: 24px; width: 55%; } .sk-p { height: 16px; width: 70%; margin-top: -12px; }
+.sk-hero { height: 200px; } .sk-row { height: 92px; } .sk-card { height: 220px; }
+.spin-wrap { display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); font-size: 14px; }
+.spinner { width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--border-10); border-top-color: var(--primary); animation: spin .9s linear infinite; }
+@keyframes shimmer { to { transform: translateX(100%); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+.state { align-items: center; text-align: center; padding: 28px 20px; gap: 14px; }
+.state .ico { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--primary-10); }
+.state.error .ico { background: var(--error-bg); }
+.state.error .ico svg path { stroke: var(--error); }
+.state h1 { font-size: 18px; line-height: 24px; font-weight: 700; color: var(--text-dark); }
+.state p { font-size: 16px; line-height: 24px; color: var(--muted); max-width: 440px; }
+.state .detail { font-size: 14px; color: var(--muted); background: var(--mauve); border-radius: var(--radius); padding: 8px 12px; max-width: 100%; overflow-wrap: anywhere; }
+
+/* Debug panel — only when CONFIG.debug is true */
+.dbg-btn { position: fixed; left: 10px; top: calc(14px + var(--safe-top)); z-index: 30; min-height: 32px; padding: 0 12px; border-radius: var(--radius); border: 0; background: #1f2430; color: #fff; font-size: 13px; font-weight: 700; }
+.dbg { position: fixed; left: 10px; right: 10px; top: calc(54px + var(--safe-top)); max-height: 60vh; overflow: auto; z-index: 30; background: #1f2430; color: #e8eaf0; border-radius: var(--radius); padding: 10px 12px; font: 12px/1.5 ui-monospace, Menlo, monospace; }
+.dbg ol { margin: 0; padding-left: 18px; } .dbg .w { color: #ffc266; } .dbg .e { color: #ff8a80; }
+
+/* ===========================================================================
+   10. MICRO-ANIMATIONS — replayed when a screen opens
+   =========================================================================== */
+@keyframes growW { from { width: 0; } }
+@keyframes growH { from { height: 0; } }
+@keyframes drawLine { from { stroke-dashoffset: 1; } }
+@keyframes pop { from { transform: scale(0); } }
+.screen.play .bar > i { animation: growW .65s cubic-bezier(.2,.7,.2,1) both; animation-delay: calc(var(--i, 0) * 80ms); }
+.screen.play .col:not(.empty) .b { animation: growH .65s cubic-bezier(.2,.7,.2,1) both; animation-delay: calc(var(--i, 0) * 60ms); }
+.screen.play .spark polyline { stroke-dasharray: 1; animation: drawLine .8s ease-out both; }
+.screen.play .spark circle { transform-box: fill-box; transform-origin: center; animation: pop .25s cubic-bezier(.3,1.6,.5,1) .55s both; }
+@media (prefers-reduced-motion: reduce) { .screen.play *, .sk::after, .spinner, .rec-wrap, .rec-chev { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Activity header — close (QUIT) bottom-right -->
+  <header class="header">
+    <button class="hdr-btn" id="hdrBtn" type="button" aria-label="Close">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <main class="main" id="main">
+
+    <!-- Skeleton loader (hidden once data is rendered) -->
+    <div class="skeleton" id="skeleton" aria-busy="true" aria-label="Loading your results">
+      <div class="sk sk-h1"></div><div class="sk sk-p"></div>
+      <div class="spin-wrap"><span class="spinner" aria-hidden="true"></span>Loading your results…</div>
+      <div class="sk sk-hero"></div>
+      <div class="stats"><div class="sk sk-row"></div><div class="sk sk-row"></div></div>
+      <div class="sk sk-card"></div>
+    </div>
+
+    <!-- Error / empty state (filled by showState) -->
+    <section class="screen card state" id="state" role="alert"></section>
+
+    <!-- ===================== SCREEN 1: YOUR RESULTS ===================== -->
+    <section class="screen" id="results" aria-labelledby="r-title">
+      <div class="heading">
+        <h1 id="r-title" tabindex="-1">Your results</h1>
+        <p class="lede" id="r-lede">Here’s how your last week went.</p>
+      </div>
+      <div class="stack">
+        <div class="dateline">
+          <div class="when">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 5H6C4.34315 5 3 6.34315 3 8V18C3 19.6569 4.34315 21 6 21H18C19.6569 21 21 19.6569 21 18V8C21 6.34315 19.6569 5 18 5Z" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 10H21M8 3V7M16 3V7" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <strong id="r-period"></strong>
+          </div>
+          <span class="wk" id="r-week"></span>
+        </div>
+
+        <div class="card">
+          <h2 class="h3 ink">Units last week</h2>
+          <div class="big"><span class="num" id="r-units" data-count="0">0</span><span class="unit">units</span></div>
+          <!-- Collapsible recommendation — header, body and colour come from CONFIG -->
+          <div class="rec" id="rec">
+            <button class="rec-head" id="recHead" type="button" aria-expanded="true" aria-controls="recWrap">
+              <span class="rec-title" id="recTitle"></span>
+              <svg class="rec-chev" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 15L12 8L19 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="rec-wrap" id="recWrap" role="region" aria-labelledby="recTitle">
+              <div class="rec-inner"><div class="rec-body" id="recBody"></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-label">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6.5 4H16.5L15.5 20H7.5L6.5 4Z" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M16.5 8H19C19.2652 8 19.5196 8.10536 19.7071 8.29289C19.8946 8.48043 20 8.73478 20 9V14C20 14.2652 19.8946 14.5196 19.7071 14.7071C19.5196 14.8946 19.2652 15 19 15H16" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.60001 7.5H16.4" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Total drinks</span>
+            </div>
+            <div class="stat-value" id="r-drinks"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 3H16C16 8 15 11 12 11C9 11 8 8 8 3Z" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 11V20" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.5 20H15.5" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 3L21 21" stroke="var(--primary)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span>Drink-free days</span>
+            </div>
+            <div class="stat-value" id="r-free"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cardhead"><h2 class="h3">How you felt last week</h2><span class="aside" id="r-scale"></span></div>
+          <div class="feelings" id="r-feel"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== SCREEN 2: YOUR PROGRESS ===================== -->
+    <section class="screen" id="progress" aria-labelledby="p-title">
+      <div class="heading">
+        <h1 id="p-title" tabindex="-1">Your progress</h1>
+        <p class="lede" id="p-lede">Week by week since you started.</p>
+      </div>
+      <div class="stack">
+        <div class="chart-card">
+          <div class="cardhead"><h2 class="h3">Units each week</h2><span class="aside" id="p-latest"></span></div>
+          <div>
+            <div class="plot" id="p-plot" role="img"></div>
+            <div class="xlabels" id="p-x" aria-hidden="true"></div>
+          </div>
+          <div class="legend" id="p-legend"><i></i>Starting week</div>
+        </div>
+
+        <div class="summary" id="p-summary"></div>
+
+        <div class="card trends">
+          <div class="cardhead"><h2 class="h3">How you’ve felt</h2><span class="aside" id="p-scale"></span></div>
+          <div id="p-trends" style="display:flex;flex-direction:column;gap:14px"></div>
+        </div>
+
+        <div class="card tbl-card">
+          <h2 class="h3">Your drinking, start vs now</h2>
+          <div id="p-table"></div>
+          <p class="footnote">“Start” is the typical week you told us about when the program began.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Action bar — buttons depend on the screen (see setActions) -->
+  <footer class="actionbar" id="actionbar">
+    <div class="actions" id="actions"></div>
+  </footer>
+</div>
+
+<button class="dbg-btn" id="dbgBtn" type="button" hidden>Debug</button>
+<div class="dbg" id="dbg" hidden><ol id="dbgList"></ol></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var VERSION = 'v3.1';   // shown in the debug log only
+  var DEMO = window.WPR_DEMO || null;   // drink-results-demo.html injects pre-filled data here
+  var INIT_TIMEOUT_MS = 15000;           // give up waiting for the app after this
+  var REST_TIMEOUT_MS = 10000;           // per REST_REQUEST
+
+  /* Default question labels. Admins can override any of them with CONFIG.labels. */
+  var DEFAULT_LABELS = {
+    totalUnits: 'total_units',
+    totalDrinks: 'total_drinks',
+    breakdown: 'drink_breakdown',
+    drinkFreeDays: 'drink_free_days',
+    energy: 'energy',
+    mood: 'mood',
+    sleep: 'sleep_quality'
+  };
+
+  /* Placeholder text for the collapsible when the admin leaves it empty. */
+  var LOREM_TITLE = 'Lorem ipsum';
+  var LOREM_BODY = 'Lorem ipsum dolor sit amet consectetur adipiscing elit pariatur cillum lorem ea fugiat minim id et.';
+
+  /* Feelings shown on both screens, in this order (icons exported from Figma). */
+  var SVG = function (paths, w) {
+    return '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true" stroke="var(--primary)" stroke-width="' + (w || 2) + '" stroke-linecap="round" stroke-linejoin="round">' + paths + '</svg>';
+  };
+  var FEELINGS = [
+    { key: 'energy', name: 'Energy', icon: SVG('<path d="M13 3L5 14H11L10 21L18 10H12L13 3Z"/>') },
+    { key: 'mood', name: 'Mood', icon: SVG('<path d="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21Z"/><path d="M8.5 14.5C8.92183 15.022 9.45506 15.443 10.0607 15.7322C10.6663 16.0215 11.3289 16.1716 12 16.1716C12.6711 16.1716 13.3337 16.0215 13.9393 15.7322C14.5449 15.443 15.0782 15.022 15.5 14.5"/><path d="M9 9.5H9.01M15 9.5H15.01"/>') },
+    { key: 'sleep', name: 'Sleep quality', icon: SVG('<path d="M20 14.5C19.486 15.7029 18.6849 16.7614 17.6669 17.5827C16.6488 18.4041 15.4449 18.9633 14.1605 19.2114C12.8762 19.4594 11.5506 19.3888 10.2999 19.0056C9.04922 18.6224 7.91156 17.9383 6.98661 17.0134C6.06166 16.0884 5.37762 14.9508 4.99443 13.7001C4.61123 12.4494 4.54057 11.1238 4.78863 9.83946C5.03668 8.55512 5.59589 7.35119 6.41727 6.33314C7.23865 5.31509 8.29713 4.51399 9.5 4C8.10761 5.39239 7.32538 7.28087 7.32538 9.25C7.32538 11.2191 8.10761 13.1076 9.5 14.5C10.8924 15.8924 12.7809 16.6746 14.75 16.6746C16.7191 16.6746 18.6076 15.8924 20 14.5Z"/>') }
+  ];
+  var ICON_ERROR = SVG('<path d="M12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C7.02944 3 3 7.02944 3 12C3 16.9706 7.02944 21 12 21Z"/><path d="M12 7.5V13M12 16.4V16.5"/>', 1.9);
+  var ICON_EMPTY = SVG('<path d="M8 3H16C16 8 15 11 12 11C9 11 8 8 8 3Z"/><path d="M12 11V20"/><path d="M8.5 20H15.5"/><path d="M3 3L21 21"/>', 1.9);
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* =========================================================================
+     DEBUG LOG — visible only with CONFIG.debug (or demo ?debug)
+     ========================================================================= */
+  var debug = (function () {
+    var lines = [], on = false;
+    function add(cls, args) {
+      var text = Array.prototype.map.call(args, function (a) { return typeof a === 'string' ? a : JSON.stringify(a); }).join(' ');
+      lines.push({ cls: cls, text: text });
+      if (on) paint();
+    }
+    function paint() {
+      $('dbgList').innerHTML = lines.map(function (l) { return '<li class="' + l.cls + '">' + esc(l.text) + '</li>'; }).join('');
+    }
+    return {
+      enable: function () {
+        on = true; $('dbgBtn').hidden = false; paint();
+        $('dbgBtn').onclick = function () { $('dbg').hidden = !$('dbg').hidden; };
+      },
+      info: function () { add('', arguments); },
+      warn: function () { add('w', arguments); },
+      error: function () { add('e', arguments); }
+    };
+  })();
+
+  /* =========================================================================
+     MESSAGE BRIDGE — web iframe and React Native WebView
+     ========================================================================= */
+  var isNative = typeof window.ReactNativeWebView !== 'undefined';
+
+  function send(text) {
+    if (DEMO) { if (DEMO.onPost) DEMO.onPost(JSON.parse(text)); return; }
+    if (isNative) window.ReactNativeWebView.postMessage(text);
+    else window.parent.postMessage(text, '*');
+  }
+  function postToApp(key, data) { send(JSON.stringify({ key: key, data: data === undefined ? null : data })); }
+
+  // REST_REQUEST — fields at the top level of the envelope (not under "data")
+  var reqId = 0, pending = {};
+  function restRequest(method, model, data) {
+    return new Promise(function (resolve, reject) {
+      var id = 'wpr-' + (++reqId);
+      var timer = setTimeout(function () {
+        delete pending[id];
+        reject(new Error('No reply from the app for ' + model + ' (' + method + ')'));
+      }, REST_TIMEOUT_MS);
+      pending[id] = { resolve: resolve, reject: reject, timer: timer };
+      send(JSON.stringify({ key: 'REST_REQUEST', method: method, model: model, data: data, id: id, specialParams: null }));
+    });
+  }
+
+  var init = {};
+  var REQUIRED = ['API', 'USER', 'AUTH', 'ACTIVITY', 'ACTIVITY_RESPONSE', 'CONFIG'];
+  var started = false;
+
+  function onMessage(event) {
+    var message;
+    try { message = typeof event.data === 'string' ? JSON.parse(event.data) : event.data; } catch (e) { return; }
+    if (!message || !message.key) return;
+
+    if (message.key === 'REQUEST_RESPONSE') {
+      var p = pending[message.id];
+      if (!p) return;
+      clearTimeout(p.timer); delete pending[message.id];
+      if (message.error) p.reject(new Error(typeof message.error === 'string' ? message.error : JSON.stringify(message.error)));
+      else p.resolve(message.data);
+      return;
+    }
+    init[message.key] = message.data;
+    if (message.key === 'QUESTIONS' && started) applyCopy(message.data);
+    if (!started && REQUIRED.every(function (k) { return init[k] !== undefined; })) {
+      started = true;
+      startTemplate();
+    }
+  }
+  document.addEventListener('message', onMessage);   // Android React Native
+  window.addEventListener('message', onMessage);     // iOS React Native + web
+
+  /* =========================================================================
+     NO TEXT SELECTION / COPYING
+     ========================================================================= */
+  ['copy', 'cut', 'contextmenu', 'selectstart', 'dragstart'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) { e.preventDefault(); });
+  });
+
+  // iOS Safari only shows :active (pressed) styles when a touchstart listener is registered
+  document.addEventListener('touchstart', function () {}, { passive: true });
+
+  /* =========================================================================
+     COLOUR + CONTRAST HELPERS (same rules as the drink tracker templates)
+     ========================================================================= */
+  function hexToRgb(hex) {
+    if (typeof hex !== 'string') return null;
+    var h = hex.trim().replace('#', '');
+    if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+    if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  function luminance(rgb) {
+    var c = rgb.map(function (v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+  function contrast(a, b) { var l1 = luminance(a), l2 = luminance(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); }
+  function contrastHex(a, b) { return contrast(hexToRgb(a) || [0, 0, 0], hexToRgb(b) || [0, 0, 0]); }
+  // White label unless contrast < 4.5:1 (WCAG AA), then black if that reads better.
+  function readableOn(hex) {
+    var rgb = hexToRgb(hex); if (!rgb) return '#ffffff';
+    var w = contrast(rgb, [255, 255, 255]), k = contrast(rgb, [0, 0, 0]);
+    return w >= 4.5 ? '#ffffff' : (k > w ? '#000000' : '#ffffff');
+  }
+  function toHex(rgb) { return '#' + rgb.map(function (v) { return ('0' + Math.round(v).toString(16)).slice(-2); }).join(''); }
+  function tint(hex, pct) { var rgb = hexToRgb(hex); return rgb ? toHex(rgb.map(function (v) { return v * pct + 255 * (1 - pct); })) : null; }  // mix with white
+  function shade(hex, pct) { var rgb = hexToRgb(hex); return rgb ? toHex(rgb.map(function (v) { return v * pct; })) : null; }               // mix with black
+  function rgba(hex, a) { var rgb = hexToRgb(hex) || [0, 0, 0]; return 'rgba(' + rgb.join(', ') + ', ' + a + ')'; }
+
+  /* =========================================================================
+     THEME — App.theme with Settings.theme fallback (colours, header, font)
+     ========================================================================= */
+  // Creator › Style › Font → Google Font family. Lato is the default.
+  var FONT_MAP = { LATO: 'Lato', ROBOTO: 'Roboto', OPEN_SANS: 'Open Sans', MONTSERRAT: 'Montserrat', POPPINS: 'Poppins',
+    NUNITO: 'Nunito', NUNITO_SANS: 'Nunito Sans', INTER: 'Inter', RALEWAY: 'Raleway', SOURCE_SANS_PRO: 'Source Sans 3',
+    MULISH: 'Mulish', WORK_SANS: 'Work Sans', OSWALD: 'Oswald', PT_SANS: 'PT Sans', QUICKSAND: 'Quicksand' };
+
+  function loadTheme() {
+    var appId = (init.ACTIVITY_RESPONSE && init.ACTIVITY_RESPONSE.app) || (init.ACTIVITY && init.ACTIVITY.app);
+    var appP = appId ? restRequest('get', 'App', appId).then(function (a) { return (a && a.theme) || {}; }).catch(function (e) { debug.warn('App theme not loaded:', e.message); return {}; }) : Promise.resolve({});
+    var setP = restRequest('list', 'Settings', {}).then(function (r) { return (r && r.items && r.items[0] && r.items[0].theme) || {}; }).catch(function (e) { debug.warn('Platform theme not loaded:', e.message); return {}; });
+    return Promise.all([appP, setP]).then(function (t) {
+      var app = t[0], plat = t[1];
+      return {
+        colors: Object.assign({}, plat.colors, app.colors),
+        raw: [app, plat],   // full themes — Display Color can name any colour in them
+        font: app.font || plat.font,
+        activityHeader: app.activityHeader || plat.activityHeader || null
+      };
+    });
+  }
+
+  function applyTheme(theme) {
+    var root = document.documentElement.style;
+    var c = (theme && theme.colors) || {};
+    themeColors = indexThemeColours(theme && theme.raw ? theme.raw : [theme || {}]);
+    var primary = hexToRgb(c.primary) ? c.primary : '#613ca8';
+    root.setProperty('--primary', primary);
+    root.setProperty('--on-primary', readableOn(primary));
+    root.setProperty('--primary-60a', rgba(primary, 0.6));
+    // Tints + button states (Figma › Button). For the design's own purple the exact
+    // Figma values in :root are kept; any other app primary gets them derived.
+    if (primary.toLowerCase() !== '#613ca8') {
+      var hover = tint(primary, 0.80), pressed = shade(primary, 0.80);
+      root.setProperty('--primary-10', tint(primary, 0.10));
+      root.setProperty('--primary-20', tint(primary, 0.20));
+      root.setProperty('--primary-30', tint(primary, 0.30));
+      root.setProperty('--primary-hover', hover);
+      root.setProperty('--primary-pressed', pressed);
+      root.setProperty('--on-primary-hover', readableOn(hover));
+      root.setProperty('--on-primary-pressed', readableOn(pressed));
+    }
+    // Headings + numbers use the app dark colour if it is readable on white
+    var dark = hexToRgb(c.dark) && contrastHex(c.dark, '#ffffff') >= 4.5 ? c.dark : '#0a3c64';
+    root.setProperty('--text-dark', dark);
+    // Primary as text (e.g. "/ 5") only when it passes 4.5:1 on white
+    root.setProperty('--accent-ink', contrastHex(primary, '#ffffff') >= 4.5 ? primary : dark);
+    // Page background ← app light colour, if light enough to keep text readable
+    if (hexToRgb(c.light) && contrastHex(c.light, '#000000') >= 12) root.setProperty('--bg', c.light);
+    // Activity header colour (contrast-checked close icon)
+    var hdr = theme && theme.activityHeader && !theme.activityHeader.transparent && hexToRgb(theme.activityHeader.color) ? theme.activityHeader.color : '#0a3c64';
+    root.setProperty('--header-bg', hdr);
+    root.setProperty('--header-fg', readableOn(hdr));
+    // App font from Creator › Style › Font (falls back to Lato)
+    var fam = theme && FONT_MAP[String(theme.font || '').toUpperCase().replace(/[\s-]+/g, '_')];
+    if (fam && fam !== 'Lato') {
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(fam).replace(/%20/g, '+') + ':wght@400;700&display=swap';
+      document.head.appendChild(link);
+      root.setProperty('--font', "'" + fam + "', 'Lato', system-ui, sans-serif");
+    }
+    debug.info('Theme — primary ' + primary + ', header ' + hdr + ', font ' + (fam || 'Lato'));
+    themeReady = true;
+    debug.info('Theme colours: ' + Object.keys(themeColors).map(function (k) { return k + ' ' + themeColors[k]; }).join(', '));
+    renderRecommendation();   // the Display Color may name a theme colour
+  }
+
+  /* =========================================================================
+     EDITABLE TEXT — headings + descriptions from TEXT_CONTENT blocks
+     One block per text: page1_heading, page1_description, page2_heading, page2_description
+     ========================================================================= */
+  var COPY_DEFAULTS = {
+    page1_heading: 'Your results',
+    page1_description: 'Here’s how your last week went.',
+    page2_heading: 'Your progress',
+    page2_description: 'Week by week since you started.'
+  };
+  var COPY_SLOTS = [['page1_heading', 'r-title'], ['page1_description', 'r-lede'], ['page2_heading', 'p-title'], ['page2_description', 'p-lede']];
+  var copyApplied = false;
+
+  // Rich text from Creator → plain text (DOMParser never runs scripts or event handlers)
+  function plainText(html) {
+    var src = String(html || '').replace(/<(script|style)[\s\S]*?<\/\1>/gi, '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|h[1-6])>/gi, '\n');
+    var t = new DOMParser().parseFromString(src, 'text/html').body.textContent || '';
+    return t.replace(/\u00a0/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  /* Creator WYSIWYG → safe HTML. Rebuilds the content from an allow-list:
+       paragraphs, line breaks, bold, italic, underline, numbered lists, bullet lists.
+     Every attribute, link, image and script is dropped. Headings (H1–H6) become a
+     bold paragraph at body size. Quill saves bullets as <ol><li data-list="bullet">,
+     so list items are regrouped by their data-list type. */
+  var RICH_INLINE = { STRONG: 'strong', B: 'strong', EM: 'em', I: 'em', U: 'u' };
+  var RICH_DROP = /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|NOSCRIPT|TEMPLATE|SVG|MATH|IMG|VIDEO|AUDIO|CANVAS|FORM|INPUT|BUTTON|SELECT|TEXTAREA|HEAD|TITLE|META|LINK)$/;
+  function richText(html) {
+    var src = String(html || '');
+    if (!/<[a-z][\s\S]*>/i.test(src)) {                    // plain text: keep its line breaks
+      var t = src.trim();
+      return t ? esc(t).replace(/\r?\n/g, '<br>') : '';
+    }
+    var doc = new DOMParser().parseFromString(src, 'text/html');   // inert document — nothing runs
+    var out = document.createElement('div');
+    var make = function (tag, parent) { var el = document.createElement(tag); parent.appendChild(el); return el; };
+
+    function convList(list, parent) {
+      var cur = null, curType = null;
+      Array.prototype.forEach.call(list.childNodes, function (li) {
+        if (li.nodeType !== 1 || li.tagName !== 'LI') { if (li.nodeType === 1) { cur = null; conv([li], parent); } return; }
+        var dl = (li.getAttribute('data-list') || '').toLowerCase();
+        var type = dl ? (dl === 'ordered' ? 'ol' : 'ul') : list.tagName.toLowerCase();
+        if (!cur || type !== curType) { cur = make(type, parent); curType = type; }
+        var item = make('li', cur);
+        var ind = String(li.className || '').match(/ql-indent-(\d+)/);   // Quill indent levels
+        if (ind) item.style.marginLeft = (Math.min(+ind[1], 8) * 1.5) + 'em';
+        conv(li.childNodes, item);
+      });
+    }
+    function conv(nodes, parent) {
+      Array.prototype.forEach.call(nodes, function (n) {
+        if (n.nodeType === 3) { parent.appendChild(document.createTextNode(n.nodeValue)); return; }
+        if (n.nodeType !== 1) return;
+        var tag = n.tagName;
+        if (RICH_DROP.test(tag) || /\bql-ui\b/.test(n.className || '')) return;
+        if (tag === 'BR') { make('br', parent); return; }
+        if (RICH_INLINE[tag]) { conv(n.childNodes, make(RICH_INLINE[tag], parent)); return; }
+        if (tag === 'UL' || tag === 'OL') { convList(n, parent); return; }
+        if (tag === 'LI') { conv(n.childNodes, make('li', parent.tagName === 'UL' || parent.tagName === 'OL' ? parent : make('ul', parent))); return; }
+        if (/^H[1-6]$/.test(tag)) { conv(n.childNodes, make('strong', make('p', parent))); return; }
+        if (/^(P|DIV|BLOCKQUOTE|PRE|SECTION|ARTICLE|HEADER|FOOTER|TABLE|TR)$/.test(tag)) {
+          // block element: its own paragraph (inside a list item, keep the text inline)
+          var target = parent.tagName === 'LI' ? parent : make('p', parent);
+          if (target === parent && parent.childNodes.length) make('br', parent);
+          conv(n.childNodes, target); return;
+        }
+        // Inline wrappers (span, a, font …): keep the text; keep bold / italic / underline set by style
+        var st = String(n.getAttribute('style') || '').toLowerCase(), t = parent;
+        if (/font-weight\s*:\s*(bold|[6-9]00)/.test(st)) t = make('strong', t);
+        if (/font-style\s*:\s*italic/.test(st)) t = make('em', t);
+        if (/text-decoration[^;]*underline/.test(st)) t = make('u', t);
+        conv(n.childNodes, t);
+      });
+    }
+    conv(doc.body.childNodes, out);
+    // Trailing empty paragraphs (Quill's "<p><br></p>") would only add space at the end
+    while (out.lastChild && out.lastChild.nodeType === 1 && out.lastChild.tagName === 'P' && !out.lastChild.textContent.trim()) out.removeChild(out.lastChild);
+    return out.innerHTML;
+  }
+
+  function applyCopy(questions) {
+    if (!Array.isArray(questions)) return;   // not received yet — the default text stays in place
+    readRecommendation(questions);
+    var list = questions.filter(function (q) { return q && q !== recBlock && (!q.type || q.type === 'TEXT_CONTENT'); });
+    var byLabel = {}, others = [];
+    list.forEach(function (q) {
+      var l = String(q.label || '').toLowerCase().trim().replace(/[\s-]+/g, '_');
+      if (COPY_DEFAULTS[l] !== undefined && !byLabel[l]) byLabel[l] = q; else others.push(q);
+    });
+    var byOrder = !Object.keys(byLabel).length;   // no labels matched → use the blocks in order
+    COPY_SLOTS.forEach(function (slot, i) {
+      var key = slot[0], q = byLabel[key] || (byOrder ? others[i] : null);
+      var txt = q ? plainText(q.text) : '';
+      if (key.indexOf('heading') > -1) txt = txt.replace(/\s*\n\s*/g, ' ');
+      $(slot[1]).textContent = txt || COPY_DEFAULTS[key];
+      debug[q && txt ? 'info' : 'warn'](key + ': ' + (q && txt ? '"' + txt.slice(0, 40) + '" (block ' + (byLabel[key] ? 'labelled ' + key : 'no. ' + (i + 1) + ' by order') + ')' : 'no TEXT_CONTENT block found — using the default text'));
+    });
+    if (list.length) copyApplied = true;
+  }
+
+  /* -------------------------------------------------------------------------
+     COLLAPSIBLE RECOMMENDATION — a collapsible text content block in the Topic
+     Found by Label "recommendation" (or by its collapsible display type). Its header,
+     text and colour come from the block; anything missing shows lorem ipsum.
+     ------------------------------------------------------------------------- */
+  var REC_LABELS = ['recommendation', 'collapsible'];
+  var recBlock = null;
+  var rec = { title: '', body: '', html: '', colour: null, open: true };
+  var themeColors = {};   // App theme colours (set by applyTheme) — Display Color may name one
+  var themeReady = false; // until the theme loads, colour names can't be checked yet
+
+  function isCollapsible(q) {
+    return /COLLAPS|ACCORDION|EXPAND/i.test([q.type, q.textDisplayType, q.displayType, q.contentType, q.style, q.variant].join(' '));
+  }
+  // The block's fields, one level deep (some settings may sit in a nested object)
+  function fieldsOf(q) {
+    var out = [];
+    Object.keys(q).forEach(function (k) {
+      var v = q[k];
+      if (v && typeof v === 'object' && !Array.isArray(v) && !('r' in v && 'g' in v)) Object.keys(v).forEach(function (k2) { out.push([k + '.' + k2, v[k2]]); });
+      else out.push([k, v]);
+    });
+    return out;
+  }
+  var NOT_SETTINGS = /^(_id|id|label|text|type|topic|order|options|app|subject|createdAt|updatedAt|__v|image|audio|video|page)$/i;
+  function colourValue(v) {
+    if (v && typeof v === 'object' && 'r' in v) { var k = v.r <= 1 && v.g <= 1 && v.b <= 1 ? 255 : 1; return toHex([v.r * k, v.g * k, v.b * k]); }
+    if (typeof v !== 'string') return null;
+    var h = v.trim(); if (/^[0-9a-f]{3}([0-9a-f]{3})?$/i.test(h)) h = '#' + h;
+    return hexToRgb(h) ? h : null;
+  }
+
+  function readRecommendation(questions) {
+    var byLabel = questions.filter(function (q) { return q && REC_LABELS.indexOf(String(q.label || '').toLowerCase().trim()) > -1; })[0];
+    var q = byLabel || questions.filter(function (q) { return q && isCollapsible(q); })[0] || null;
+    recBlock = q;
+    rec = { title: '', body: '', html: '', colour: null, open: true };
+    if (q) {
+      var fields = fieldsOf(q);
+      // "Display Color" first (displayColor / display_color / displayColour), then any other colour field
+      var dcKey = Object.keys(q).filter(function (k) { return /^display_?colou?r$/i.test(k); })[0];
+      if (dcKey && q[dcKey] !== null && q[dcKey] !== '') rec.colour = q[dcKey];   // may be a string or an object
+      else {
+        var dc = fields.filter(function (kv) { return /^display_?colou?r$/i.test(kv[0].split('.').pop()) && kv[1] !== null && kv[1] !== ''; })[0];
+        if (dc) rec.colour = dc[1];   // inside a nested settings object
+      }
+      fields.forEach(function (kv) {
+        var key = kv[0].split('.').pop(), v = kv[1];
+        if (NOT_SETTINGS.test(key)) return;
+        if (!rec.title && typeof v === 'string' && /head|title|summary|question/i.test(key)) rec.title = plainText(v).replace(/\s*\n\s*/g, ' ');
+        else if (rec.colour === null && /colou?r|background|^bg/i.test(key) && v !== null && v !== '' && typeof v !== 'boolean') rec.colour = v;
+        else if (typeof v === 'boolean' && /expand|open/i.test(key)) rec.open = v;
+        else if (typeof v === 'boolean' && /collapsed/i.test(key)) rec.open = !v;
+      });
+      rec.body = plainText(q.text);    // used to tell whether the block is empty
+      rec.html = richText(q.text);     // what is shown
+      debug.info('Recommendation block: label "' + (q.label || '') + '", type ' + (q.type || '?') + ' — header "' + (rec.title || '(empty)') + '", Display Color ' + (rec.colour === null ? '(none)' : JSON.stringify(rec.colour)) + '. Fields: ' + fields.map(function (kv) { return kv[0]; }).join(', '));
+    } else {
+      debug.warn('Recommendation: no collapsible block labelled "recommendation" found — showing lorem ipsum');
+    }
+    renderRecommendation();
+  }
+
+  /* QUESTIONS normally arrives with the init messages. If it hasn't come shortly
+     after start, read this activity's Topic directly. */
+  function loadCopy() {
+    applyCopy(init.QUESTIONS);
+    if (copyApplied) return;
+    setTimeout(function () {
+      if (copyApplied) return;
+      var topic = init.ACTIVITY && (init.ACTIVITY.topic && typeof init.ACTIVITY.topic === 'object' ? (init.ACTIVITY.topic._id || init.ACTIVITY.topic.id) : init.ACTIVITY.topic);
+      if (!topic) return;
+      restRequest('list', 'Question', { topic: topic, sort: 'order', limit: 50 })
+        .then(function (r) { if (!copyApplied) applyCopy(((r && r.items) || []).sort(function (a, b) { return (a.order || 0) - (b.order || 0); })); })
+        .catch(function (e) { debug.warn('Heading text not loaded — ' + e.message); });
+    }, 1500);
+  }
+
+  /* =========================================================================
+     CONFIG
+     ========================================================================= */
+  var cfg = {};
+  function bool(v, d) { if (v === true || v === 'true') return true; if (v === false || v === 'false') return false; return d; }
+  function readConfig(raw) {
+    var c = raw || {};
+    // Admin panel may deliver OBJECT fields as JSON strings — accept both
+    ['start', 'weeks', 'labels'].forEach(function (k) {
+      if (typeof c[k] === 'string' && c[k].trim()) {
+        try { c[k] = JSON.parse(c[k]); } catch (e) { debug.error('CONFIG.' + k + ' is not valid JSON'); c[k] = null; }
+      }
+    });
+    var toList = function (v) { return Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []); };
+    // Template placeholders like "WEEK2_DRINK_ID" left in the config are ignored with a warning
+    var isPlaceholder = function (id) { return typeof id === 'string' && /^[A-Z0-9_]+_ID$/.test(id.trim()); };
+    var real = function (id, where) {
+      if (id === '' || (typeof id === 'string' && !id.trim())) { debug.warn(where + ' is empty — paste the Activity ID'); return null; }
+      if (!id) return null;
+      if (isPlaceholder(id)) { debug.warn(where + ' is still the placeholder "' + id + '" — replace it with the real Activity ID'); return null; }
+      return String(id).trim();
+    };
+    var slot = function (s, name) {
+      s = s || {};
+      return {
+        drinkRecord: real(s.drinkRecord !== undefined ? s.drinkRecord : s.drinkRecordId, name + ' drinkRecord'),
+        surveys: toList(s.surveys || s.surveyIds || s.survey).map(function (id) { return real(id, name + ' survey'); }).filter(Boolean)
+      };
+    };
+    var num = function (v, d) { var n = parseFloat(v); return isFinite(n) && n > 0 ? n : d; };
+    // Weeks: { "week1": {…}, "week2": {…} } (keys sorted by their number) or an array (week 1 first)
+    var weekList = [];
+    if (Array.isArray(c.weeks)) weekList = c.weeks;
+    else if (c.weeks && typeof c.weeks === 'object') {
+      var keyed = Object.keys(c.weeks).map(function (k) { var m = k.match(/\d+/); return m ? { n: +m[0], k: k } : null; }).filter(Boolean)
+        .sort(function (a, b) { return a.n - b.n; });
+      keyed.forEach(function (x, i) { if (x.n !== i + 1) debug.warn('CONFIG.weeks: "' + x.k + '" is shown as week ' + (i + 1) + ' — week numbers should run 1, 2, 3…'); });
+      weekList = keyed.map(function (x) { return c.weeks[x.k]; });
+    }
+    return {
+      start: c.start ? slot(c.start, 'Start') : null,
+      weeks: weekList.map(function (w, i) { return slot(w, 'Week ' + (i + 1)); }),
+      showLastWeekPage: bool(c.showLastWeekPage, true),
+      ratingMax: num(c.ratingMax, 5),
+      includeToday: c.includeToday !== false && c.includeToday !== 'false',
+      labels: Object.assign({}, DEFAULT_LABELS, (c.labels && typeof c.labels === 'object') ? c.labels : {}),
+      debug: c.debug === true || c.debug === 'true'
+    };
+  }
+
+
+  /* =========================================================================
+     DATA LOADING
+     1. List completed attempts for every configured activity
+     2. Pick the attempt for each slot (start + each week)
+     3. Load the answers for those attempts and resolve their questions
+     4. Read the metrics by question label
+     ========================================================================= */
+  var questionCache = {};     // questionId → Question record (label, options)
+  var topicQuestions = {};    // activityId → Question records in its topic
+  var qrByQuestion = {};      // questionId → Promise of the user's answers to it
+
+  var DAY_MS = 86400000;
+  var MATCH_WINDOW_MS = 3 * DAY_MS;   // answer ↔ attempt date match when no parent link
+
+  function idOf(x) { return x && typeof x === 'object' ? (x._id || x.id) : x; }
+  function short(id) { id = String(id || ''); return id.length > 8 ? '…' + id.slice(-6) : id; }
+  function labelOf(q) { return (q && (q.label || q.name)) || '?'; }
+
+  /* Date of a record: its date fields, else the creation time inside a Mongo ObjectId. */
+  function dateOf(r) {
+    if (!r) return null;
+    var f = r.date || r.endDate || r.completedAt || r.updatedAt || r.createdAt || r.startDate;
+    var d = f ? new Date(f) : null;
+    if (d && !isNaN(d)) return d;
+    var id = String(r.id || r._id || '');
+    if (/^[0-9a-f]{24}$/i.test(id)) return new Date(parseInt(id.slice(0, 8), 16) * 1000);
+    return null;
+  }
+  /* When an answer was last saved. Cogniss may update an existing answer on a repeat
+     attempt instead of creating a new one, so the latest of its timestamps is used. */
+  function answerTime(qr) {
+    var best = null;
+    [qr && qr.updatedAt, qr && qr.date, qr && qr.createdAt].forEach(function (f) {
+      var d = f ? new Date(f) : null;
+      if (d && !isNaN(d) && (!best || d > best)) best = d;
+    });
+    return best || dateOf(qr);
+  }
+  function fmtStamp(d) { return d ? d.getDate() + ' ' + MONTHS[d.getMonth()] + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) : 'no date'; }
+
+  function parentOf(qr) { return idOf(qr && (qr.parentActivityResponse || qr.activityResponse)); }
+
+  function listAttempts(activityId) {
+    return restRequest('list', 'ActivityResponse', {
+      activity: activityId, user: init.USER && init.USER.id, complete: true, sort: '-date', limit: 50
+    }).then(function (r) {
+      var items = ((r && r.items) || []).filter(function (a) {
+        return a && a.complete !== false && a.id !== (init.ACTIVITY_RESPONSE && init.ACTIVITY_RESPONSE.id) &&
+          (!a.activity || idOf(a.activity) === activityId);   // guard in case the filter is ignored
+      });
+      items.sort(function (a, b) { return (dateOf(b) || 0) - (dateOf(a) || 0); });
+      return items;
+    });
+  }
+
+  /* Load the questions of an activity's topic: gives labels up front and powers
+     the question-by-question fallback. Never fails the whole load. */
+  function loadActivityQuestions(activityId) {
+    return restRequest('get', 'Activity', activityId).then(function (a) {
+      var topic = idOf(a && a.topic);
+      if (!topic) throw new Error('no topic on the activity');
+      return restRequest('list', 'Question', { topic: topic, limit: 200 }).then(function (r) {
+        var items = ((r && r.items) || []).filter(function (q) { var t = idOf(q.topic); return !t || t === topic; });
+        items.forEach(function (q) { questionCache[idOf(q)] = q; });
+        topicQuestions[activityId] = items;
+        debug.info('Activity ' + short(activityId) + ' questions: ' + (items.length ? items.map(labelOf).join(', ') : 'none found'));
+      });
+    }).catch(function (e) {
+      topicQuestions[activityId] = [];
+      debug.warn('Activity ' + short(activityId) + ': questions not loaded — ' + (e && e.message ? e.message : 'not found (check the Activity ID)'));
+    });
+  }
+
+  /* Keep one answer per question for this attempt: the one linked to it, else
+     (when answers carry no link) the one closest in date within 3 days. */
+  function pickForAttempt(items, ar, activityId) {
+    var arDate = dateOf(ar), allowed = {};
+    (topicQuestions[activityId] || []).forEach(function (q) { allowed[idOf(q)] = true; });
+    var restrict = Object.keys(allowed).length > 0, byQ = {};
+    items.forEach(function (it) {
+      var qid = idOf(it && it.question);
+      if (!qid || (restrict && !allowed[qid])) return;
+      var p = parentOf(it), score;
+      if (p) { if (p !== ar.id) return; score = -1; }           // linked to this attempt: best
+      else {
+        var d = dateOf(it);
+        if (!d || !arDate) score = Infinity;                     // no dates: accept, lowest priority
+        else { score = Math.abs(d - arDate); if (score > MATCH_WINDOW_MS) return; }
+      }
+      if (!byQ[qid] || score < byQ[qid].score) byQ[qid] = { it: it, score: score };
+    });
+    return Object.keys(byQ).map(function (k) { return byQ[k].it; });
+  }
+
+  function answersByParent(field, ar) {
+    var q = { user: init.USER && init.USER.id, limit: 100 }; q[field] = ar.id;
+    return restRequest('list', 'QuestionResponse', q)
+      .then(function (r) { return (r && r.items) || []; })
+      .catch(function (e) { debug.warn('QuestionResponse by ' + field + ' failed — ' + e.message); return []; });
+  }
+
+  /* All of this user's answers to one question, newest save first.
+     Pages through results and re-checks the question on each item, so it still
+     works if the API ignores the filter or the user has many answers. */
+  var PAGE = 100, MAX_PAGES = 5;
+  function answersToQuestion(qid) {
+    if (qrByQuestion[qid]) return qrByQuestion[qid];
+    var out = [];
+    function page(n) {
+      return restRequest('list', 'QuestionResponse', { question: qid, user: init.USER && init.USER.id, sort: '-date', limit: PAGE, offset: n * PAGE })
+        .then(function (r) {
+          var items = (r && r.items) || [];
+          var mine = items.filter(function (it) { return idOf(it && it.question) === qid; });
+          out = out.concat(mine);
+          var filterIgnored = mine.length < items.length;
+          // Keep paging only while full pages come back (more may exist)
+          if (items.length === PAGE && n + 1 < MAX_PAGES && (filterIgnored || (r.count && out.length < r.count))) return page(n + 1);
+        });
+    }
+    qrByQuestion[qid] = page(0).then(function () {
+      out.sort(function (a, b) { return (answerTime(b) || 0) - (answerTime(a) || 0); });
+      return out;
+    }).catch(function (e) { debug.warn('Answers to question ' + short(qid) + ' not loaded — ' + e.message); return out; });
+    return qrByQuestion[qid];
+  }
+
+  /* Find an attempt's answers. Tries, in order:
+       1. answers embedded on the attempt record
+       2. QuestionResponse linked by parentActivityResponse
+       3. QuestionResponse linked by activityResponse
+       4. each topic question's answers, matched to the attempt by link or date */
+  function answersForAttempt(ar, activityId, name) {
+    var done = function (list, how) {
+      debug[list.length ? 'info' : 'warn'](name + ' (attempt ' + short(ar.id) + '): ' + list.length + ' answer(s)' + (list.length ? ' via ' + how : ' — none found by any method'));
+      return list;
+    };
+    var emb = ar.questionResponses || ar.responses;
+    if (Array.isArray(emb) && emb.length && typeof emb[0] === 'object') return Promise.resolve(done(emb, 'attempt record'));
+    return answersByParent('parentActivityResponse', ar).then(function (a) {
+      a = pickForAttempt(a, ar, activityId);
+      if (a.length) return done(a, 'parentActivityResponse');
+      return answersByParent('activityResponse', ar).then(function (b) {
+        b = pickForAttempt(b, ar, activityId);
+        if (b.length) return done(b, 'activityResponse');
+        var qs = (topicQuestions[activityId] || []).filter(function (q) { return !/_CONTENT$/.test(q.type || ''); });
+        return Promise.all(qs.map(function (q) { return answersToQuestion(idOf(q)); })).then(function (lists) {
+          var all = [].concat.apply([], lists);
+          return done(pickForAttempt(all, ar, activityId), 'question lookup');
+        });
+      });
+    });
+  }
+
+  // Labels for any answers whose question wasn't in a loaded topic
+  function resolveQuestions(answers) {
+    var need = [];
+    answers.forEach(function (qr) {
+      var q = qr.question;
+      if (q && typeof q === 'object' && (q.label !== undefined || q.text !== undefined)) { questionCache[idOf(q)] = questionCache[idOf(q)] || q; return; }
+      var id = idOf(q);
+      if (id && !questionCache[id] && need.indexOf(id) < 0) need.push(id);
+    });
+    return Promise.all(need.map(function (id) {
+      return restRequest('get', 'Question', id).then(function (q) { questionCache[id] = q || {}; })
+        .catch(function (e) { debug.warn('Question ' + short(id) + ' not loaded — ' + e.message); questionCache[id] = {}; });
+    }));
+  }
+
+  /* Turn one answer into a number: value → text → chosen option (score, number in text, position). */
+  function numberFrom(qr, q) {
+    var v = qr.value;
+    if (v !== undefined && v !== null && v !== '' && isFinite(parseFloat(v))) return parseFloat(v);
+    if (qr.text !== undefined && qr.text !== null) {
+      var m = String(qr.text).match(/-?\d+(\.\d+)?/);
+      if (m) return parseFloat(m[0]);
+    }
+    var optId = idOf(qr.option) || (Array.isArray(qr.options) && qr.options.length ? idOf(qr.options[0]) : null);
+    if (optId && q && Array.isArray(q.options)) {
+      for (var i = 0; i < q.options.length; i++) {
+        var o = q.options[i];
+        if (idOf(o) === optId) {
+          if (typeof o.score === 'number' && o.score > 0) return o.score;
+          var t = String(o.text || o.label || '').replace(/<[^>]*>/g, '').match(/\d+(\.\d+)?/);
+          if (t) return parseFloat(t[0]);
+          return i + 1;
+        }
+      }
+    }
+    return null;
+  }
+
+  /* Which metric does a question hold?
+     exactMetric: the question's label IS one of the known labels (total_drinks …).
+     metricFor:   exact label, else a keyword guess from the label/text (fallback). */
+  function exactMetric(q, kind) {
+    var L = cfg.labels, label = String((q && q.label) || '').toLowerCase().trim();
+    var keys = kind === 'drink' ? ['totalUnits', 'totalDrinks', 'drinkFreeDays', 'breakdown'] : ['drinkFreeDays', 'energy', 'mood', 'sleep'];
+    for (var i = 0; i < keys.length; i++) if (label && label === String(L[keys[i]]).toLowerCase()) return keys[i];
+    return null;
+  }
+  function metricFor(q, kind) {
+    var exact = exactMetric(q, kind);
+    if (exact) return exact;
+    var label = String((q && q.label) || '').toLowerCase().trim();
+    var text = String((q && q.text) || '').replace(/<[^>]*>/g, ' ').toLowerCase();
+    var s = label + ' ' + text;
+    if (kind === 'drink') {
+      if (/^day_?\d+$/.test(label)) return 'dayText';          // Weekly Drink Tracker day summaries
+      // Lists / summaries / headings are never totals (e.g. drinks_selected, drinks_summary)
+      if (/selected|summary|heading|description|consumed|list/.test(label)) return null;
+      if (/free/.test(label)) return 'drinkFreeDays';
+      if (/breakdown/.test(s)) return 'breakdown';
+      if (/unit/.test(label)) return 'totalUnits';
+      if (/drink/.test(label)) return 'totalDrinks';
+      return null;
+    }
+    if (/free|not drink|without (a )?drink|alcohol-free|sober/.test(s)) return 'drinkFreeDays';
+    if (/energy/.test(s)) return 'energy';
+    if (/mood/.test(s)) return 'mood';
+    if (/sleep/.test(s)) return 'sleep';
+    return null;
+  }
+
+  /* Read the metrics from a set of answers.
+     Pass 1 takes answers whose label is an exact known label (total_drinks …), whatever
+     order the answers arrive in. Pass 2 fills anything still missing from keyword
+     guesses — and only from number-type questions, so a free-text or multi-select
+     answer (e.g. drinks_selected "Half pint (285ml)") can never become a total. */
+  var NOT_NUMERIC = /MULTISELECT|TEXT_RESPONSE|_CONTENT$/;
+  function readMetrics(answers, kind, into, src) {
+    var items = answers.map(function (qr) {
+      var q = questionCache[idOf(qr.question)] || (typeof qr.question === 'object' ? qr.question : {});
+      return { qr: qr, q: q, exact: exactMetric(q, kind), key: metricFor(q, kind) };
+    });
+    [true, false].forEach(function (exactPass) {
+      items.forEach(function (it) {
+        var qr = it.qr, q = it.q, key = it.key;
+        if (!!it.exact !== exactPass) return;
+        if (!key) { if (!NOT_NUMERIC.test(q.type || '') && !/MULTISELECT/.test(q.type || '')) debug.warn(src + ': answer not used — label "' + labelOf(q) + '"' + (q.type ? ' (' + q.type + ')' : '') + '. Check the label or set CONFIG.labels.'); return; }
+        if (key === 'dayText') { (into.days = into.days || []).push({ n: parseInt(String(q.label).replace(/\D/g, ''), 10), text: qr.text || '' }); return; }
+        if (into[key] !== null && into[key] !== undefined) return;
+        if (key === 'breakdown') { into.breakdown = qr.text || null; return; }
+        if (!exactPass && NOT_NUMERIC.test(q.type || '')) { debug.info(src + ': "' + labelOf(q) + '" (' + q.type + ') not used for ' + key + ' — not a number question'); return; }
+        var n = numberFrom(qr, q);
+        if (n !== null) { into[key] = n; debug.info(src + ': ' + key + ' = ' + n + ' (label "' + labelOf(q) + '"' + (exactPass ? '' : ', matched by keyword') + ')'); }
+        else debug.warn(src + ': ' + key + ' answer has no number — raw ' + JSON.stringify({ value: qr.value, text: qr.text, option: idOf(qr.option) }));
+      });
+    });
+  }
+
+  /* Period of a drink record: parsed from the breakdown's first line, else worked out from the date. */
+  function periodOf(rec) {
+    var m = rec.breakdown && String(rec.breakdown).match(/\((\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})\)/);
+    if (m) return { from: new Date(m[1] + 'T12:00:00'), to: new Date(m[2] + 'T12:00:00') };
+    // Weekly Drink Tracker: "Day 1 – Thursday, 2 November 2026:" … "Day 7 – …"
+    if (rec.days && rec.days.length) {
+      var dated = rec.days.map(function (d) {
+        var x = String(d.text).match(/(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})/i);
+        return x ? { n: d.n, date: new Date(+x[3], MONTHS_LONG.map(function (mm) { return mm.toLowerCase(); }).indexOf(x[2].toLowerCase()), +x[1], 12) } : null;
+      }).filter(Boolean).sort(function (a, b) { return a.n - b.n; });
+      if (dated.length) {
+        var first = dated[0], last = dated[dated.length - 1];
+        var f = new Date(first.date); f.setDate(f.getDate() - (first.n - 1));
+        var t = new Date(last.date); t.setDate(t.getDate() + (7 - last.n));
+        return { from: f, to: t };
+      }
+    }
+    if (!rec.date) return null;
+    var to = new Date(rec.date); to.setHours(12, 0, 0, 0);
+    if (!cfg.includeToday) to.setDate(to.getDate() - 1);
+    var from = new Date(to); from.setDate(from.getDate() - 6);
+    return { from: from, to: to };
+  }
+
+  function emptyRec() { return { units: null, drinks: null, drinkFreeDays: null, energy: null, mood: null, sleep: null, date: null, period: null, breakdown: null }; }
+
+  function loadData() {
+    var slots = (cfg.start ? [{ name: 'Start', s: cfg.start }] : []).concat(cfg.weeks.map(function (s, i) { return { name: 'Week ' + (i + 1), s: s }; }));
+    // How many slots use each survey activity (shared → match by date only)
+    var uses = {};
+    slots.forEach(function (sl) { sl.s.surveys.forEach(function (id) { uses[id] = (uses[id] || 0) + 1; }); });
+
+    var ids = [];
+    slots.forEach(function (sl) { [sl.s.drinkRecord].concat(sl.s.surveys).forEach(function (id) { if (id && ids.indexOf(id) < 0) ids.push(id); }); });
+    var attemptsBy = {};
+
+    return Promise.all(ids.map(loadActivityQuestions)).then(function () { return Promise.all(ids.map(function (id) {
+      return listAttempts(id).then(function (a) { attemptsBy[id] = a; debug.info('Activity ' + short(id) + ': ' + a.length + ' completed attempt(s)'); })
+        .catch(function (e) { attemptsBy[id] = []; debug.error('Activity ' + id + ' attempts not loaded:', e.message); throw e; });
+    })); }).then(function () {
+      var seen = {};          // survey activityId → how many slots have used it so far
+      var answerCache = {};   // attemptId → Promise of its answers (each attempt loaded once)
+      var MAX_TRIES = 6;      // attempts tried per source before giving up
+      var SHARED_WINDOW_MS = 7 * DAY_MS;
+
+      /* Walk the candidate attempts in order and keep the first that has answers.
+         Empty attempts (started then completed without answers, e.g. tests) are skipped. */
+      function firstWithAnswers(cands, activityId, name) {
+        var i = 0, tried = 0;
+        function next() {
+          if (i >= cands.length || tried >= MAX_TRIES) return Promise.resolve(null);
+          var ar = cands[i++]; tried++;
+          var p = answerCache[ar.id] || (answerCache[ar.id] = answersForAttempt(ar, activityId, name));
+          return p.then(function (a) {
+            if (a.length) { if (tried > 1) debug.info(name + ': skipped ' + (tried - 1) + ' empty attempt(s), using …' + String(ar.id).slice(-6)); return { ar: ar, answers: a }; }
+            return next();
+          });
+        }
+        return next();
+      }
+
+      // Candidate order for a survey: closest in date to the drink record first
+      function surveyCandidates(id, anchor, k, drinkAr) {
+        var list = attemptsBy[id] || [];
+        if (anchor) {
+          var dated = list.filter(function (a) { return dateOf(a); }).sort(function (a, b) { return Math.abs(dateOf(a) - anchor) - Math.abs(dateOf(b) - anchor); });
+          // A survey shared by several weeks only counts if it was done within 7 days of that week's record
+          return uses[id] > 1 ? dated.filter(function (a) { return Math.abs(dateOf(a) - anchor) <= SHARED_WINDOW_MS; }) : dated.concat(list.filter(function (a) { return !dateOf(a); }));
+        }
+        if (uses[id] === 1) return list;                       // newest first
+        if (!drinkAr) return [];                               // shared survey, week not logged → nothing to match
+        var oldest = list.slice().reverse()[k - 1];            // no dates: k-th slot ↔ k-th oldest attempt
+        return oldest ? [oldest] : [];
+      }
+
+      // How many slots can see each survey question (shared questions need the 7-day window)
+      var qUses = {};
+      slots.forEach(function (sl) {
+        var mark = {};
+        sl.s.surveys.forEach(function (id) { (topicQuestions[id] || []).forEach(function (q) { mark[idOf(q)] = true; }); });
+        Object.keys(mark).forEach(function (qid) { qUses[qid] = (qUses[qid] || 0) + 1; });
+      });
+      var logged = {};   // questionId → history already logged
+
+      /* Survey answers for one slot. Answers are linked to attempts and attempts belong to
+         activities, so only answers from this slot's own survey activities count — even if
+         the start check-in and a weekly survey share a Topic (same questions).
+         • Survey activity used by this slot only → the latest of its answers.
+         • Same survey activity listed for several slots → split by date: the latest answer
+           from this week's drink record (−12h) up to the next logged week's (−12h), else the
+           latest in the 7 days before this week's drink record. */
+      var GRACE_MS = 12 * 3600 * 1000;
+      function surveyAnswersByTime(sl, anchor, nextAnchor, order) {
+        // Attempts of this slot's own survey activities, and whether any of them is shared
+        var ownAttempts = {};
+        sl.s.surveys.forEach(function (id) { (attemptsBy[id] || []).forEach(function (a) { ownAttempts[a.id] = true; }); });
+        var sharedWith = sl.s.surveys.filter(function (id) { return uses[id] > 1; });
+        if (sharedWith.length) debug.info(sl.name + ': survey ' + sharedWith.map(short).join(', ') + ' is also listed for another week — its answers are split by date');
+        var qs = [];
+        sl.s.surveys.forEach(function (id) {
+          (topicQuestions[id] || []).forEach(function (q) { var key = metricFor(q, 'survey');
+            // Drink-free days only come from the start check-in; weekly ones come from the drink record
+            if (key && !(key === 'drinkFreeDays' && sl.name !== 'Start') && qs.indexOf(q) < 0) qs.push(q); });
+        });
+        return Promise.all(qs.map(function (q) {
+          var qid = idOf(q);
+          return answersToQuestion(qid).then(function (list) {
+            if (!logged[qid]) {
+              logged[qid] = true;
+              var links = {}; list.forEach(function (it) { var p = parentOf(it); if (p) links[p] = true; });
+              debug.info('Survey question "' + labelOf(q) + '": ' + list.length + ' saved answer(s), linked to ' + Object.keys(links).length + ' attempt(s); latest saved ' + fmtStamp(list[0] && answerTime(list[0])));
+            }
+            // Keep answers from this slot's own survey attempts (answers with no attempt link can't
+            // be told apart, so they stay in and are split by date if the question is shared)
+            var linked = list.some(function (it) { return parentOf(it); });
+            var mine = list.filter(function (it) { var p = parentOf(it); return !p || ownAttempts[p]; });
+            var dated = mine.filter(function (it) { return answerTime(it); })
+              .sort(function (a, b) { return answerTime(b) - answerTime(a); });   // newest first
+            // Latest answer wins when the activity isn't shared and the answers are known to be ours
+            var useLatest = !sharedWith.length && (linked || qUses[qid] === 1);
+            if (!anchor) return useLatest ? (dated[0] || mine[0] || null) : null;   // week not logged
+            var best, how, lo;
+            if (useLatest) {
+              best = dated[0] || mine[0] || null; how = 'latest from ' + (sl.name === 'Start' ? 'the start check-in' : 'this week\u2019s survey');
+            } else {
+              lo = anchor - GRACE_MS; var hi = nextAnchor ? nextAnchor - GRACE_MS : Infinity;
+              best = dated.filter(function (it) { var t = answerTime(it); return t >= lo && t < hi; })[0] || null; how = 'latest this week';
+            }
+            // Same activity listed for several slots and nothing in the date window (e.g. answered
+            // out of order while testing): the k-th slot using it takes its k-th oldest attempt
+            if (!best && sharedWith.length && order) sharedWith.forEach(function (id) {
+              if (best) return;
+              var a = (attemptsBy[id] || []).slice().reverse()[(order[id] || 1) - 1];
+              var cand = a && dated.filter(function (it) { return parentOf(it) === a.id; })[0];
+              if (cand) { best = cand; how = 'attempt ' + order[id] + ' of the shared survey, by order'; }
+            });
+            if (!best && !useLatest) { best = dated.filter(function (it) { var t = answerTime(it); return t < lo && t >= anchor - SHARED_WINDOW_MS; })[0] || null; how = 'latest in the 7 days before the drink record'; }
+            if (best) debug.info(sl.name + ': "' + labelOf(q) + '" answer saved ' + fmtStamp(answerTime(best)) + ' (' + how + ')');
+            else debug.warn(sl.name + ': no "' + labelOf(q) + '" answer saved for this week');
+            return best;
+          });
+        })).then(function (picked) { return picked.filter(Boolean); });
+      }
+
+      // Phase 1: each slot's drink record (its date anchors that week's survey window)
+      return Promise.all(slots.map(function (sl) {
+        var drinkList = sl.s.drinkRecord ? (attemptsBy[sl.s.drinkRecord] || []) : [];
+        return firstWithAnswers(drinkList, sl.s.drinkRecord, sl.name + ' drink record').then(function (d) {
+          return { d: d, drinkAr: d ? d.ar : drinkList[0] || null };   // no answers anywhere → latest, for its score
+        });
+      })).then(function (drinks) {
+      var anchors = drinks.map(function (x) { return dateOf(x.drinkAr); });
+      // Position of each slot among the slots sharing a survey — used by the attempt-matching
+      // fallback for a survey whose questions couldn't be loaded (e.g. a wrong Activity ID)
+      var ks = slots.map(function (sl) { var o = {}; sl.s.surveys.forEach(function (id) { o[id] = seen[id] = (seen[id] || 0) + 1; }); return o; });
+      // Phase 2: survey answers, now that every week's window is known
+      return Promise.all(slots.map(function (sl, si) {
+        var d = drinks[si].d, drinkAr = drinks[si].drinkAr, anchor = anchors[si], nextAnchor = null;
+        for (var j = si + 1; j < anchors.length; j++) if (anchors[j] && anchor && anchors[j] > anchor) { nextAnchor = anchors[j]; break; }
+          if (!drinkAr && sl.s.drinkRecord) return { sl: sl, drinkAr: null, drinkAnswers: [], surveyAnswers: [] };   // week not logged yet
+          // Surveys whose questions loaded are matched answer-by-answer; any others fall back to attempts
+          var byTime = sl.s.surveys.filter(function (id) { return (topicQuestions[id] || []).length; });
+          var byAttempt = sl.s.surveys.filter(function (id) { return byTime.indexOf(id) < 0; });
+          return Promise.all([
+            byTime.length ? surveyAnswersByTime({ name: sl.name, s: { surveys: byTime } }, anchor, nextAnchor, ks[si]) : [],
+            Promise.all(byAttempt.map(function (id) {
+              debug.warn(sl.name + ': survey ' + short(id) + ' questions not loaded — matching by attempt instead');
+              return firstWithAnswers(surveyCandidates(id, anchor, ks[si][id], drinkAr), id, sl.name + ' survey ' + short(id));
+            }))
+          ]).then(function (r) {
+            var answers = r[0].slice();
+            r[1].forEach(function (x) { if (x) answers = answers.concat(x.answers); });
+            return { sl: sl, drinkAr: drinkAr, drinkAnswers: d ? d.answers : [], surveyAnswers: answers };
+          });
+      }));
+      }).then(function (plan) {
+      var answersBy = {};
+      plan.forEach(function (p) {
+        if (p.drinkAr) answersBy[p.drinkAr.id] = p.drinkAnswers;
+        answersBy['survey:' + p.sl.name] = p.surveyAnswers;
+      });
+      return Promise.resolve()
+        .then(function () {
+          var all = [];
+          Object.keys(answersBy).forEach(function (k) { all = all.concat(answersBy[k]); });
+          return resolveQuestions(all);
+        })
+        .then(function () {
+          return plan.map(function (p) {
+            var rec = emptyRec();
+            if (p.drinkAr) {
+              readMetrics(answersBy[p.drinkAr.id] || [], 'drink', rec, p.sl.name);
+              rec.units = rec.totalUnits !== undefined && rec.totalUnits !== null ? rec.totalUnits : null;
+              rec.drinks = rec.totalDrinks !== undefined ? rec.totalDrinks : null;
+              if (rec.units === null && typeof p.drinkAr.customScore === 'number') { rec.units = p.drinkAr.customScore; debug.warn(p.sl.name + ': units taken from the activity score (' + rec.units + ') — the total_units answer wasn\u2019t found'); }
+              rec.date = dateOf(p.drinkAr);
+              rec.period = periodOf(rec);
+            }
+            // Drink-free days: weekly → that week's drink record only;
+            // start → the start check-in survey (drink record as a fallback)
+            var dfRecord = rec.drinkFreeDays; rec.drinkFreeDays = null;
+            readMetrics(p.surveyAnswers, 'survey', rec, p.sl.name + ' survey');
+            if (p.sl.name === 'Start') rec.drinkFreeDays = rec.drinkFreeDays !== null ? rec.drinkFreeDays : dfRecord;
+            else {
+              rec.drinkFreeDays = dfRecord;
+              if (p.drinkAr && dfRecord === null) debug.warn(p.sl.name + ': no drink_free_days answer in the weekly drink record');
+            }
+            if (rec.drinkFreeDays !== null) rec.drinkFreeDays = Math.max(0, Math.min(7, Math.round(rec.drinkFreeDays)));
+            if (p.sl.s.drinkRecord && rec.units === null) debug.warn(p.sl.name + ': no units found' + (p.drinkAr ? ' — check the total_units label' : ' — not logged yet'));
+            return rec;
+          });
+        });
+      });
+    }).then(function (recs) {
+      var start = cfg.start ? recs.shift() : null;
+      return buildModel(start, recs);
+    });
+  }
+
+  /* Model shared by the live template and the demo. */
+  function buildModel(start, weeks) {
+    // Accept ISO date strings for the period (used by the demo data)
+    var toDates = function (r) {
+      if (r && r.period && typeof r.period.from === 'string') r.period = { from: new Date(r.period.from + 'T12:00:00'), to: new Date(r.period.to + 'T12:00:00') };
+      return r;
+    };
+    weeks = weeks.map(function (w, i) { w = toDates(Object.assign(emptyRec(), w)); w.n = i + 1; w.logged = w.units !== null && w.units !== undefined; return w; });
+    var latest = -1;
+    weeks.forEach(function (w, i) { if (w.logged) latest = i; });
+    if (start) { start = toDates(Object.assign(emptyRec(), start)); if (start.units === undefined) start.units = null; }
+    return { start: start, weeks: weeks, latest: latest };
+  }
+
+
+  /* =========================================================================
+     FORMATTING
+     ========================================================================= */
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var MONTHS_LONG = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  // "29 October – 4 November", or "5 – 11 October" within one month
+  function fmtPeriod(p) {
+    if (!p) return '';
+    var a = p.from, b = p.to;
+    var left = a.getDate() + (a.getMonth() !== b.getMonth() ? ' ' + MONTHS_LONG[a.getMonth()] : '');
+    return left + ' – ' + b.getDate() + ' ' + MONTHS_LONG[b.getMonth()];
+  }
+  function r1(n) { return Math.round(n * 10) / 10; }
+  function dec(n) { return r1(n) % 1 ? 1 : 0; }
+  // Whole numbers without decimals (as in the design: "3 / 5"), otherwise 1 decimal place
+  function fmt(n) { return n === null || n === undefined ? '–' : (dec(n) ? r1(n).toFixed(1) : String(Math.round(n))); }
+  function plural(n, one, many) { return r1(n) === 1 ? one : many; }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function countAttr(n) { return n === null || n === undefined ? '' : ' data-count="' + r1(n) + '"' + (dec(n) ? ' data-dec="1"' : ''); }
+
+  /* =========================================================================
+     COLLAPSIBLE RECOMMENDATION — header, body and colour from CONFIG
+     ========================================================================= */
+  var recOpen = null;
+  function setRecOpen(open) {
+    recOpen = open;
+    $('rec').classList.toggle('closed', !open);
+    $('recHead').setAttribute('aria-expanded', String(open));
+  }
+  $('recHead').addEventListener('click', function () { setRecOpen(!recOpen); });
+
+  /* Every colour in the App theme, by normalised name: "primary", "secondary", "dark",
+     "light", "accent1", "accent2" … Lists such as accentColors: ["#..", "#.."] become
+     accent1, accent2 …; names drop "color"/"colour", case, spaces and underscores, so
+     ACCENT_COLOR_1, accentColor1, accent_1 and accentColors[0] all mean "accent1". */
+  function colourName(x) { return String(x).toLowerCase().replace(/[^a-z0-9]/g, '').replace(/colou?rs?/g, ''); }
+  function strictHex(v) {
+    if (v && typeof v === 'object' && 'r' in v && 'g' in v) return colourValue(v);
+    if (typeof v !== 'string') return null;
+    var h = v.trim();
+    return /^#?[0-9a-f]{6}$/i.test(h) || /^#[0-9a-f]{3}$/i.test(h) ? colourValue(h.replace(/^([0-9a-f]{6})$/i, '#$1')) : null;
+  }
+  function indexThemeColours(themes) {
+    var idx = {};
+    var add = function (name, hex) { var n = colourName(name); if (n && !(n in idx)) idx[n] = hex; };
+    (function walk(obj, path, depth) {
+      if (!obj || typeof obj !== 'object' || depth > 5) return;
+      if (Array.isArray(obj)) {
+        var base = path[path.length - 1] || '';
+        obj.forEach(function (v, i) {
+          var hex = strictHex(v) || (v && typeof v === 'object' ? strictHex(v.hex || v.value || v.color || v.colour) : null);
+          if (hex) {
+            add(base + (i + 1), hex); add(base.replace(/s$/i, '') + (i + 1), hex);
+            if (v && typeof v === 'object') { if (v.name) add(v.name, hex); if (v.key) add(v.key, hex); if (v.id) add(v.id, hex); }
+          } else walk(v, path.concat(String(i + 1)), depth + 1);
+        });
+        return;
+      }
+      Object.keys(obj).forEach(function (k) {
+        var v = obj[k], hex = strictHex(v);
+        if (hex) { add(k, hex); add(path.concat(k).join(''), hex); }
+        else if (v && typeof v === 'object') walk(v, path.concat(k), depth + 1);
+      });
+    })(themes, [], 0);   // app theme first, so it wins over the platform theme
+    return idx;
+  }
+
+  /* Display Color → a hex colour. Accepts a hex code ("#0A3C64", "0A3C64"), an {r,g,b}
+     or {hex} object, or the name of an App theme colour ("Primary", "SECONDARY",
+     "accent", "primaryColor" …). Unknown names fall back to primary. */
+  function resolveDisplayColour(v) {
+    if (v === null || v === undefined || v === '') return null;
+    var hex = colourValue(v);
+    if (hex) return hex;
+    if (typeof v === 'object') {
+      var inner = v.hex || v.value || v.color || v.colour || v.name;
+      return inner !== undefined ? resolveDisplayColour(inner) : null;
+    }
+    var want = colourName(v);
+    if (themeColors[want]) return themeColors[want];
+    var primary = getComputedStyle(document.documentElement).getPropertyValue('--primary').trim();
+    if (want === 'primary' || want === 'accent' || want === 'default' || want === 'theme') return primary;
+    if (themeReady) debug.warn('Recommendation Display Color "' + v + '" isn\u2019t in the app theme — using primary. Theme colours found: ' + (Object.keys(themeColors).join(', ') || 'none'));
+    return primary;
+  }
+
+  function renderRecommendation() {
+    var r = rec, el = $('rec');
+    // Empty fields show lorem ipsum so it's obvious the block is editable
+    $('recTitle').textContent = r.title.trim() || LOREM_TITLE;
+    if (r.body.trim()) $('recBody').innerHTML = r.html;   // built by richText() from allowed tags only
+    else $('recBody').textContent = LOREM_BODY;
+    // Background = the Display Color at 10% (no colour → primary/10 from the theme).
+    // Text switches to white only if the default dark text would be unreadable.
+    var accent = resolveDisplayColour(r.colour);
+    var bg = accent ? tint(accent, 0.10) : null;
+    ['--rec-bg', '--rec-title', '--rec-body'].forEach(function (p) { el.style.removeProperty(p); });
+    if (bg) {
+      var titleOk = contrastHex('#1c1c21', bg) >= 4.5, bodyOk = contrastHex('#383a40', bg) >= 4.5;
+      el.style.setProperty('--rec-bg', bg);
+      el.style.setProperty('--rec-title', titleOk ? '#1c1c21' : readableOn(bg));
+      el.style.setProperty('--rec-body', bodyOk ? '#383a40' : (titleOk ? '#1c1c21' : readableOn(bg)));
+    }
+    setRecOpen(recOpen === null ? r.open : recOpen);
+  }
+
+  /* =========================================================================
+     RENDER — SCREEN 1: YOUR RESULTS (last week)
+     ========================================================================= */
+  function renderResults(m) {
+    var w = m.weeks[m.latest], max = cfg.ratingMax, units = r1(w.units);
+    $('r-period').textContent = w.period ? fmtPeriod(w.period) : 'Last week';
+    $('r-week').textContent = 'Week ' + w.n;
+    setCount($('r-units'), units);
+    renderRecommendation();
+
+    // Stat cards
+    var stat = function (el, v, unit, missing) {
+      el.className = 'stat-value' + (v === null ? ' na' : '');
+      el.innerHTML = v === null ? '<b>' + missing + '</b>' : '<b' + countAttr(v) + '>' + fmt(v) + '</b><span>' + unit + '</span>';
+    };
+    stat($('r-drinks'), w.drinks, w.drinks !== null ? plural(w.drinks, 'drink', 'drinks') : '', 'Not recorded');
+    stat($('r-free'), w.drinkFreeDays, 'of 7 days', 'Not answered');
+
+    // How you felt last week
+    $('r-scale').textContent = 'Rated out of ' + max;
+    var any = FEELINGS.some(function (f) { return w[f.key] !== null; });
+    $('r-feel').innerHTML = (any ? '' : '<p class="note">Answer this week’s check-in to see how you felt.</p>') +
+      FEELINGS.map(function (f, i) {
+        var v = w[f.key];
+        return '<div class="feel"><div class="feel-top"><div class="feel-name">' + f.icon + f.name + '</div>' +
+          (v === null ? '<div class="score na"><span>Not answered</span></div>'
+            : '<div class="score"><b' + countAttr(v) + '>' + fmt(v) + '</b><span>/ ' + max + '</span></div>') +
+          '</div><div class="bar" role="img" aria-label="' + f.name + ' ' + (v === null ? 'not answered' : fmt(v) + ' out of ' + max) + '">' +
+          '<i style="width:' + (v === null ? 0 : Math.min(100, v / max * 100)) + '%;--i:' + i + '"></i></div></div>';
+      }).join('');
+  }
+
+  /* =========================================================================
+     RENDER — SCREEN 2: YOUR PROGRESS (week by week)
+     ========================================================================= */
+  function renderProgress(m) {
+    var w = m.weeks[m.latest], units = r1(w.units);
+    var S = m.start && m.start.units !== null ? r1(m.start.units) : null;
+
+    // Units each week: Start + one column per configured week (no guideline line)
+    $('p-latest').textContent = 'Wk ' + w.n + ' = last week';
+    var cols = (m.start ? [{ lab: 'Start', v: S, cls: 'start' }] : []).concat(m.weeks.map(function (x, i) {
+      return { lab: 'Wk ' + x.n, v: x.logged ? r1(x.units) : null, cls: i === m.latest ? 'last' : '' };
+    }));
+    var top = Math.max.apply(null, cols.map(function (c) { return c.v || 0; })) * 1.05 || 1;
+    var PLOT = ($('p-plot').clientHeight || 190) - 26;   // plot height minus room for the value label
+    var tmpl = 'repeat(' + cols.length + ', minmax(0, 1fr))';
+    $('p-plot').style.gridTemplateColumns = tmpl; $('p-x').style.gridTemplateColumns = tmpl;
+    $('p-plot').innerHTML = cols.map(function (c, i) {
+      if (c.v === null) return '<div class="col empty"><span class="val">–</span><i class="b"></i></div>';
+      return '<div class="col ' + c.cls + '"><span class="val"' + countAttr(c.v) + '>' + fmt(c.v) + '</span><i class="b" style="height:' + Math.max(2, c.v / top * PLOT) + 'px;--i:' + i + '"></i></div>';
+    }).join('');
+    $('p-x').innerHTML = cols.map(function (c) { return '<div class="' + (c.cls === 'last' ? 'now' : '') + '">' + c.lab + '</div>'; }).join('');
+    $('p-legend').hidden = !m.start;
+    $('p-plot').setAttribute('aria-label', 'Units each week: ' + cols.map(function (c) { return c.lab + ' ' + (c.v === null ? 'not logged' : fmt(c.v)); }).join(', '));
+
+    // Units vs your starting week
+    var sum = '<h2 class="h3">Units vs your starting week</h2>';
+    if (S === null || S === 0) {
+      sum += '<p>Your starting week isn’t available yet. Complete the onboarding drink record to see your change.</p>';
+    } else {
+      var d = r1(S - units), pct = Math.round(Math.abs(d) / S * 100);
+      sum += '<div class="big"><span class="num"><span' + countAttr(pct) + '>' + pct + '</span>%</span><span class="unit">' + (d > 0 ? 'lower' : d < 0 ? 'higher' : 'change') + '</span></div>' +
+        '<p>You’ve gone from ' + fmt(S) + ' units in a typical week at the start to ' + fmt(units) + ' units last week.</p>';
+    }
+    $('p-summary').innerHTML = sum;
+
+    // How you've felt — score, change since the first answer, sparkline
+    var max = cfg.ratingMax;
+    $('p-scale').textContent = 'Rated out of ' + max;
+    var series = (m.start ? [m.start] : []).concat(m.weeks.slice(0, m.latest + 1));
+    $('p-trends').innerHTML = FEELINGS.map(function (f, idx) {
+      var pts = series.map(function (r) { return r[f.key]; });
+      var cur = w[f.key], first = null;
+      for (var i = 0; i < pts.length; i++) if (pts[i] !== null) { first = { v: pts[i], i: i }; break; }
+      var change = '';
+      if (cur !== null && first && pts.filter(function (p) { return p !== null; }).length > 1) {
+        var dd = r1(cur - first.v), since = m.start && first.i === 0 ? 'since you started' : 'since week ' + (m.start ? first.i : first.i + 1);
+        change = dd === 0 ? 'No change ' + since : (dd > 0 ? 'Up ' : 'Down ') + fmt(Math.abs(dd)) + ' ' + since;
+      } else if (cur === null) change = 'Not answered last week';
+      return (idx ? '<div class="divider"></div>' : '') +
+        '<div class="trend"><div class="feel-top"><div class="feel-name">' + f.icon + f.name + '</div>' +
+        (cur === null ? '<div class="score na"><span>–</span></div>' : '<div class="score"><b' + countAttr(cur) + '>' + fmt(cur) + '</b><span>/ ' + max + '</span></div>') +
+        '</div><div class="trend-row"><span class="chg">' + change + '</span>' + sparkline(pts, max, f.name) + '</div></div>';
+    }).join('');
+
+    // Your drinking, start vs now
+    var st = m.start || emptyRec();
+    var rows = [['Units', st.units === null ? null : r1(st.units), units], ['Drinks', st.drinks, w.drinks], ['Drink-free days', st.drinkFreeDays, w.drinkFreeDays]];
+    $('p-table').innerHTML = '<div class="tbl head"><div></div><div class="r">Start</div><div class="r">Last week</div></div>' +
+      rows.map(function (r) {
+        return '<div class="tbl" style="margin-top:10px"><div class="lab">' + r[0] + '</div><div class="r old">' + fmt(r[1]) + '</div><div class="r new"' + countAttr(r[2]) + '>' + fmt(r[2]) + '</div></div>';
+      }).join('');
+  }
+
+  // Small trend line, scaled to its own range so small changes are visible; gaps skipped
+  function sparkline(pts, max, name) {
+    var W = 120, H = 40, pad = 6, n = pts.length, xy = [];
+    var vals = pts.filter(function (v) { return v !== null; });
+    if (!vals.length) return '<svg class="spark" width="120" height="40" aria-hidden="true"></svg>';
+    var lo = Math.max(0, Math.min.apply(null, vals) - 0.5), hi = Math.min(max, Math.max.apply(null, vals) + 0.5);
+    if (hi - lo < 1) { hi = Math.min(max, lo + 1); lo = Math.max(0, hi - 1); }
+    pts.forEach(function (v, i) {
+      if (v === null) return;
+      var x = n > 1 ? pad + i * (W - pad * 2) / (n - 1) : W - pad;
+      var y = H - pad - ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (H - pad * 2);
+      xy.push([r1(x), r1(y), v]);
+    });
+    var last = xy[xy.length - 1];
+    return '<svg class="spark" width="120" height="40" viewBox="0 0 120 40" role="img" aria-label="' + esc(name + ': ' + xy.map(function (p) { return fmt(p[2]); }).join(', ')) + '">' +
+      (xy.length > 1 ? '<polyline pathLength="1" points="' + xy.map(function (p) { return p[0] + ',' + p[1]; }).join(' ') + '" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>' : '') +
+      '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="4.5"/></svg>';
+  }
+
+  /* =========================================================================
+     ACTION BAR — buttons for the current screen
+     ========================================================================= */
+  function setActions(list) {
+    var bar = $('actions');
+    bar.innerHTML = '';
+    list.forEach(function (a) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn-' + a.kind;
+      b.textContent = a.label;
+      if (a.id) b.id = a.id;
+      b.addEventListener('click', a.onClick);
+      bar.appendChild(b);
+    });
+  }
+
+  /* =========================================================================
+     NAVIGATION + ANIMATION
+     ========================================================================= */
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var current = null;
+
+  function setCount(el, v) { el.dataset.count = v; if (dec(v)) el.dataset.dec = 1; else delete el.dataset.dec; el.textContent = fmt(v); }
+
+  // Numbers count up from 0 (~0.8s, ease-out)
+  function countUp(el) {
+    var target = parseFloat(el.dataset.count), d = parseInt(el.dataset.dec || '0', 10);
+    if (isNaN(target)) return;
+    var f = function (v) { return d ? v.toFixed(d) : String(Math.round(v)); };
+    if (el._raf) cancelAnimationFrame(el._raf);
+    if (reduce) { el.textContent = f(target); return; }
+    var t0 = performance.now(), T = 800;
+    (function step(now) {
+      var e = now - t0;
+      if (e >= T) { el.textContent = f(target); el._raf = null; return; }
+      el.textContent = f(target * (1 - Math.pow(1 - e / T, 3)));
+      el._raf = requestAnimationFrame(step);
+    })(t0);
+  }
+  function play(id) {
+    var scr = $(id);
+    scr.classList.remove('play'); void scr.offsetWidth; scr.classList.add('play');
+    scr.querySelectorAll('[data-count]').forEach(countUp);
+  }
+
+  function show(id) {
+    current = id;
+    ['results', 'progress', 'state'].forEach(function (s) { $(s).classList.toggle('active', s === id); });
+    window.scrollTo(0, 0);
+    if (id === 'results') {
+      setActions([{ kind: 'primary', label: 'See your progress over time', onClick: function () { show('progress'); } }]);
+    } else if (id === 'progress') {
+      setActions(cfg.showLastWeekPage
+        ? [{ kind: 'secondary', label: 'Back', onClick: function () { show('results'); } },
+           { kind: 'primary', label: 'Continue', id: 'continueBtn', onClick: function () { finish(); } }]
+        : [{ kind: 'primary', label: 'Continue', id: 'continueBtn', onClick: function () { finish(); } }]);
+    }
+    if (id !== 'state') { play(id); var h = $(id).querySelector('h1'); if (h) h.focus({ preventScroll: true }); }
+  }
+  $('hdrBtn').addEventListener('click', function () { finish(); });
+
+  /* =========================================================================
+     COMPLETION — QUIT once
+     ========================================================================= */
+  var hasQuit = false;
+  function finish() {
+    if (hasQuit) return;
+    hasQuit = true;
+    $('actions').querySelectorAll('button').forEach(function (b) { b.disabled = true; });
+    postToApp('QUIT', { completeState: 'COMPLETE' });
+  }
+
+  /* =========================================================================
+     STATES — loader, errors, empty
+     ========================================================================= */
+  function hideSkeleton() { $('skeleton').hidden = true; $('skeleton').setAttribute('aria-busy', 'false'); }
+
+  /* opts: { error, title, body, detail, retry } */
+  function showState(opts) {
+    hideSkeleton();
+    var el = $('state');
+    el.className = 'screen card state' + (opts.error ? ' error' : '');
+    el.innerHTML = '<div class="ico">' + (opts.error ? ICON_ERROR : ICON_EMPTY) + '</div>' +
+      '<h1>' + esc(opts.title) + '</h1><p>' + esc(opts.body) + '</p>' +
+      (opts.detail ? '<div class="detail">' + esc(opts.detail) + '</div>' : '');
+    show('state');
+    setActions(opts.retry
+      ? [{ kind: 'secondary', label: 'Close', onClick: function () { finish(); } },
+         { kind: 'primary', label: 'Try again', onClick: function () { $('skeleton').hidden = false; el.classList.remove('active'); setActions([]); run(); } }]
+      : [{ kind: 'primary', label: 'Close', onClick: function () { finish(); } }]);
+  }
+
+  function renderAll(m) {
+    hideSkeleton();
+    if (m.latest < 0) {
+      showState({ title: 'No drinks logged yet', body: 'Complete this week’s drink record and your results will appear here.' });
+      return;
+    }
+    if (cfg.showLastWeekPage) renderResults(m);
+    renderProgress(m);
+    show(cfg.showLastWeekPage ? 'results' : 'progress');
+  }
+
+  /* =========================================================================
+     STARTUP
+     ========================================================================= */
+  function run() {
+    if (!cfg.weeks.length) {
+      debug.error('CONFIG.weeks is empty');
+      showState({ error: true, title: 'This activity isn’t set up yet', body: 'Your results can’t be shown because no weekly drink records are linked to this activity. Please let your programme team know.', detail: 'Admin: add the "weeks" config with each week’s drinkRecord activity ID.' });
+      return;
+    }
+    loadData().then(renderAll).catch(function (e) {
+      debug.error('Load failed:', e.message);
+      showState({ error: true, title: 'We couldn’t load your results', body: 'Something went wrong while getting your drink records. Check your connection and try again.', detail: e.message, retry: true });
+    });
+  }
+
+  function startTemplate() {
+    cfg = readConfig(init.CONFIG);
+    if (cfg.debug) debug.enable();
+    loadCopy();
+    debug.info('Started ' + VERSION + ' — ' + cfg.weeks.length + ' week(s), view: ' + (cfg.showLastWeekPage ? 'last week + week by week' : 'week by week only'));
+    loadTheme().then(applyTheme, function () { applyTheme({}); }).then(run);
+  }
+
+  if (DEMO) {
+    // Demo: no bridge, no loader — render the pre-filled data immediately.
+    // URL options: ?view=standalone, ?font=MONTSERRAT, ?debug
+    var q = location.search;
+    var dc = Object.assign({}, DEMO.config || {});
+    if (/view=standalone/.test(q)) dc.showLastWeekPage = false;
+    cfg = readConfig(dc);
+    if (cfg.debug || /debug/.test(q)) debug.enable();
+    var th = Object.assign({}, DEMO.theme || {});
+    var fm = q.match(/font=([A-Z_]+)/i); if (fm) th.font = fm[1];
+    applyTheme(th);
+    applyCopy(DEMO.questions || []);
+    renderAll(buildModel(DEMO.start || null, DEMO.weeks || []));
+  } else {
+    window.addEventListener('load', function () { postToApp('READY_DYNAMIC_MEDIA'); });
+    setTimeout(function () {
+      if (started) return;
+      var missing = REQUIRED.filter(function (k) { return init[k] === undefined; });
+      debug.error('Init timed out, missing: ' + missing.join(', '));
+      showState({ error: true, title: 'This activity couldn’t load', body: 'We didn’t hear back from the app. Close this activity and open it again.', detail: 'Missing: ' + missing.join(', ') });
+    }, INIT_TIMEOUT_MS);
+  }
+})();
+</script>
+</body>
+</html>
