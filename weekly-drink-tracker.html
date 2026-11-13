@@ -1,0 +1,1658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Weekly drink record</title>
+<!--
+  =====================================================================
+  Weekly Drink Recording System — Cogniss External Template
+  ---------------------------------------------------------------------
+  Lets a user log what they drank on each of the last 7 days (ending
+  yesterday), or mark a day as drink-free, then submit the week.
+
+  Responses sent to Cogniss (matched by question Label, see QUESTION_LABELS):
+    • heading          TEXT_CONTENT    main page heading (viewed marker, no answer)
+    • description      TEXT_CONTENT    main page description (viewed marker, no answer)
+    • drinks_selected  MULTISELECT     every drink type logged this week
+    • total_drinks     NUMBER_RESPONSE total quantity of drinks
+    • total_units      NUMBER_RESPONSE total units (1 decimal place)
+    • day_1 … day_7    TEXT_RESPONSE   per-day breakdown / drink-free day
+
+  Units = (volume ml × ABV%) ÷ 1000, summed exactly, rounded to 1 dp for
+  display and submission.
+
+  Design source: Figma "Drinkaware-template" › "Drink Record System Weekly only"
+  Bump TEMPLATE_VERSION on every iteration.
+  =====================================================================
+-->
+<!-- Default font: Lato (the app font is applied on top of this if the theme provides one) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link id="font-lato" rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap">
+<style>
+  /* =========================================================
+     1. DESIGN TOKENS
+     Theme-driven values are overwritten at runtime by applyTheme().
+     Everything else comes straight from the Figma variables.
+     ========================================================= */
+  :root {
+    /* Theme-driven */
+    --primary: #613ca8;          /* theme/primary          */
+    --primary-10: #efebf6;       /* primary/10 — secondary hover */
+    --primary-20: #dfd8ee;       /* primary/20 (computed)  */
+    --primary-30: #d0c4e5;       /* secondary pressed      */
+    --primary-hover: #8163b9;    /* primary hover   = primary + 20% white */
+    --primary-pressed: #4e3086;  /* primary pressed = Primary/120 (primary − 20%) */
+    --on-primary-hover: #ffffff;
+    --on-primary-pressed: #ffffff;
+    --on-primary: #ffffff;       /* contrast-checked label */
+    --text-dark: #0a3c64;        /* text/navy-100 ← app dark colour */
+    --header-bg: #0a3c64;        /* activity header colour */
+    --header-fg: #ffffff;        /* contrast-checked close icon */
+    --bg: #ffffff;               /* page background ← app light colour */
+    --bg-success: #f5f5fb;       /* success page background */
+    --font: 'Lato', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+    /* Fixed design tokens */
+    --card: #ffffff;             /* theme/card — fixed white */
+    --text: #202429;             /* text/160 */
+    --muted: #505966;            /* text/100 */
+    --muted-2: #5c6066;          /* theme/muted */
+    --border-30: #cacdd1;
+    --border-10: #edeef0;
+    --line: #e1e3e8;             /* theme/line */
+    --cool-grey: #f1f4f7;        /* background/cool-grey */
+    --mauve: #f5f5fb;            /* background/mauve */
+    --free: #008670;             /* drink-free day green */
+    --disabled-bg: #edeef0;
+
+    --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.15);   /* 15% opacity */
+    --shadow-tile: 0 2px 5px rgba(0, 0, 0, 0.15);
+    --shadow-pop: 0 2px 8px rgba(80, 89, 102, 0.2);
+
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --sheet-h: 200px;            /* measured at runtime */
+    --content-max: 1024px;       /* layout grows with the screen (16px side margins) up to 1024px wide */
+    --header-h: 114px;           /* activity header: 114px on phones, 80px from 744px (iPad mini portrait) */
+  }
+
+  /* =========================================================
+     2. BASE
+     ========================================================= */
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    background: var(--bg);
+    min-height: 100vh;
+    overflow-x: hidden;                 /* no sideways scrolling */
+    /* Disable text selection / copying */
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Success page: fixed background, exactly one screen tall, no scrolling */
+  html.is-success, body.is-success { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body.is-success { background: var(--bg-success); }
+  body.is-success .view { padding: 0; }
+  input { -webkit-user-select: text; user-select: text; font-family: inherit; }
+  /* Fast taps must never be read as a double-tap zoom (which jumps the page towards the tap).
+     'manipulation' keeps scrolling, the carousel swipe and pinch-zoom, and drops the tap delay.
+     The sheet handle overrides this with 'none' further down for its own swipe gesture. */
+  html, body, button, input { touch-action: manipulation; }
+  button { font-family: inherit; cursor: pointer; border: 0; background: none; padding: 0; color: inherit; }
+  button:disabled { cursor: default; }
+  button:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+  p, h1, h2, h3 { margin: 0; }
+  svg { display: block; flex-shrink: 0; }
+  [hidden] { display: none !important; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  .container { width: 100%; max-width: var(--content-max); margin: 0 auto; padding: 0 16px; }   /* 16px margins at every width */
+
+  /* =========================================================
+     3. ACTIVITY HEADER — 114px (<744px) / 80px (≥744px) + status bar, close bottom-right
+     ========================================================= */
+  .activity-header {
+    position: sticky; top: 0; z-index: 30;
+    height: calc(var(--header-h) + var(--safe-top));
+    padding-top: var(--safe-top);
+    background: var(--header-bg);
+    display: flex; align-items: flex-end; justify-content: flex-end;
+    padding-right: 12px; padding-bottom: 8px;
+  }
+  .close-btn {
+    width: 44px; height: 44px; border-radius: 22px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--header-fg);
+  }
+
+  /* =========================================================
+     4. TYPOGRAPHY (Figma text styles — sizes unchanged)
+     ========================================================= */
+  .h2 { font-size: 22px; line-height: 24px; font-weight: 700; color: var(--text-dark); }
+  .body-reg { font-size: 16px; line-height: 24px; font-weight: 400; color: var(--text); }
+
+  /* =========================================================
+     5. MAIN VIEW — heading, week calendar, day summary
+     ========================================================= */
+  .view { padding-top: 24px; padding-bottom: calc(var(--sheet-h) + 24px); }
+  .heading { display: flex; flex-direction: column; gap: 6px; padding-bottom: 16px; }
+  .heading .body-reg { white-space: pre-line; }   /* keep line breaks from the description block */
+  .heading--track { gap: 8px; }
+
+  .week-label { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .week-label span { font-size: 14px; line-height: 18px; font-weight: 700; color: var(--text-dark); }
+  .week-label svg { color: var(--primary); }
+
+  /* Calendar: 7 equal columns, no sideways scroll on any width */
+  .calendar { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; margin-bottom: 24px; }
+  /* Each day is a <button>. Safari/iPadOS doesn't stretch buttons to fill a grid
+     column (they shrink to their content), so width is set explicitly here. */
+  .day {
+    width: 100%; min-width: 0; height: 110px;
+    display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+    justify-self: stretch; text-align: center; color: var(--text-dark);
+  }
+  .day-top, .day-bottom {
+    width: 100%; flex: 1 1 0; min-height: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: var(--card); border: 1px solid var(--border-30); border-radius: 4px;
+    padding: 6px 2px; overflow: hidden;
+  }
+  .dow { font-size: 10px; line-height: normal; }
+  .dom { font-size: 16px; line-height: normal; font-weight: 700; }
+  .d-units b { display: block; font-size: 14px; line-height: 18px; font-weight: 700; }
+  .d-units small { display: block; font-size: 12px; line-height: 13px; }
+  .d-free { font-size: 12px; line-height: 13px; }
+
+  /* Logged — drinks */
+  .day.has-drinks .day-bottom { background: var(--cool-grey); }
+  /* Logged — drink-free */
+  .day.is-free .day-top { color: var(--free); }
+  .day.is-free .day-bottom { background: var(--free); color: #fff; }
+  /* Selected: one merged cell */
+  /* Selected: one merged cell. Keeps the same two halves (and padding) as the
+     unselected states so the date and the units / drink-free text line up across the row. */
+  .day.is-selected { background: var(--primary-20); border: 1px solid var(--border-30); border-radius: 4px; }
+  .day.is-selected .day-top, .day.is-selected .day-bottom {
+    background: transparent; border: 0; color: var(--text-dark);
+  }
+  .day.is-selected .day-top { transform: translateY(-1px); }   /* offset the outer 1px border */
+
+  /* Day summary */
+  /* Swipe area: vertical scrolling and pinch stay native; horizontal drags are handled in JS */
+  .day-summary, .day-summary * { touch-action: pan-y pinch-zoom; }
+  .summary-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+  .summary-header p { font-size: 16px; line-height: 20px; font-weight: 700; color: var(--text-dark); }
+  .summary-header span { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); white-space: nowrap; }
+  .summary-card {
+    background: var(--card); border: 1px solid var(--border-30); border-radius: 12px;
+    min-height: 180px; padding: 24px 16px; display: flex; flex-direction: column; align-items: center; gap: 20px;
+  }
+  .summary-state { display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; width: 100%; }
+  .summary-state .empty-text { font-size: 16px; line-height: 24px; color: var(--muted); }
+  .summary-state .state-title { font-size: 18px; line-height: 24px; font-weight: 700; color: var(--primary); margin-top: 4px; }
+  .summary-state .state-sub { font-size: 16px; line-height: 24px; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; width: 100%; margin-top: 16px; text-align: center; }
+  .stats .lbl { font-size: 14px; line-height: 18px; font-weight: 700; color: var(--text); }
+  .stats .val { font-size: 22px; line-height: 30px; font-weight: 700; color: var(--text); }
+  .summary-actions { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+
+  /* =========================================================
+     6. BUTTONS — fully rounded, primary fill, contrast-checked label
+     ========================================================= */
+  .btn {
+    width: 100%; min-height: 52px; padding: 0 22px; border-radius: 40px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 700; line-height: normal; text-align: center;
+  }
+  .btn-primary { background: var(--primary); color: var(--on-primary); }
+  .btn-secondary { background: var(--card); color: var(--primary); border: 2px solid var(--primary); }
+  .btn-secondary.is-done { background: var(--primary-20); border-color: transparent; }
+
+  /* Action-bar buttons (bottom sheet) — regular weight per design */
+  .bar-btn {
+    flex: 1 1 0; min-height: 48px; padding: 12px 32px; border-radius: 96px;
+    font-size: 16px; line-height: 24px; font-weight: 400; text-align: center;
+  }
+  .bar-btn.primary { background: var(--primary); color: var(--on-primary); }
+  .bar-btn.secondary { border: 2px solid var(--primary); color: var(--primary); padding: 10px 32px; }
+  .bar-btn:disabled { background: var(--disabled-bg); color: var(--muted); border-color: transparent; }
+
+  /* =========================================================
+     7. TRACK DRINK VIEW — category carousel + drink panel
+     ========================================================= */
+  .carousel {
+    display: grid; grid-auto-flow: column; grid-auto-columns: 174px; gap: 8px;
+    overflow-x: auto; overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory; scroll-padding: 0 16px;
+    padding: 0 16px 20px; margin: 0 -16px;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .carousel::-webkit-scrollbar { display: none; }
+  .carousel.is-dragging { scroll-snap-type: none; cursor: grabbing; }
+  .cat-card {
+    position: relative; scroll-snap-align: start;
+    min-height: 132px; min-width: 150px; padding: 12px;
+    background: var(--card); border: 1px solid transparent; border-radius: 8px;
+    box-shadow: var(--shadow-tile);
+    display: flex; flex-direction: column; align-items: flex-start; gap: 12px; text-align: left;
+  }
+  .cat-card.is-selected { border: 2px solid var(--cat); padding: 11px; }   /* 2px outline, content stays put */
+  .cat-tile { width: 44px; height: 44px; border-radius: 8px; background: var(--cat); color: #fff; display: flex; align-items: center; justify-content: center; }
+  .cat-name { font-size: 16px; line-height: 20px; font-weight: 700; color: var(--text); }
+  .cat-sub { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted-2); margin-top: 2px; }
+
+  .panel {
+    background: var(--card); border-top: 4px solid var(--cat); border-radius: 8px;
+    box-shadow: var(--shadow-card); padding: 14px 12px 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px; }
+  .panel-head h2 { font-size: 18px; line-height: 24px; font-weight: 700; color: var(--text); }
+  .panel-head span { font-size: 13px; color: var(--muted-2); text-align: right; }
+  .drinks { display: flex; flex-direction: column; gap: 6px; }
+  .custom-label { font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 0.6px; color: var(--muted); text-transform: uppercase; padding: 6px 0 0; }
+
+  .drink-row {
+    min-height: 64px; padding: 8px 8px 8px 12px; border-radius: 8px;
+    background: var(--cool-grey); border: 2px solid var(--border-10);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .drink-row.is-active { background: var(--primary-10); border-color: var(--primary); }
+  .drink-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .drink-name { font-size: 16px; line-height: 20px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .drink-meta { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+  .tag-custom { font-size: 12px; line-height: 16px; font-weight: 700; color: var(--primary); background: var(--primary-20); border-radius: 8px; padding: 1px 7px; }
+
+  .stepper { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .qty { width: 30px; text-align: center; font-size: 19px; font-weight: 700; color: var(--text); }
+  /* Icon buttons: visual 32px, tap target ≥44px */
+  .icon-btn { position: relative; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+  .icon-btn::after { content: ''; position: absolute; inset: -6px; }
+  .icon-btn:disabled { opacity: 0.4; }
+
+  .add-custom {
+    width: 100%; min-height: 52px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    font-size: 16px; line-height: 20px; font-weight: 700; color: var(--primary);
+  }
+
+  /* =========================================================
+     8. BOTTOM SHEET — expandable / collapsible weekly list
+     ========================================================= */
+  .scrim { position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, 0.45); opacity: 0; transition: opacity .32s ease; }
+  .scrim.is-visible { opacity: 1; }
+  /* Expand / collapse: height is animated from JS (see setSheetOpen) */
+  .sheet-collapse { overflow: hidden; transition: height .32s cubic-bezier(.2, .8, .2, 1); }
+  .sheet {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    background: var(--card); border-radius: 16px 16px 0 0;
+    filter: drop-shadow(0 -2px 4px rgba(0, 0, 0, 0.1));
+  }
+  .sheet-inner { max-width: var(--content-max); margin: 0 auto; }
+  .sheet-toggle { width: 100%; display: block; text-align: left; touch-action: none; }
+  .sheet-handle { height: 21px; padding-top: 8px; display: flex; justify-content: center; align-items: center; }
+  .sheet-handle i { width: 38px; height: 4px; border-radius: 2px; background: var(--border-30); }
+  .sheet-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; gap: 10px; }
+  .sheet-title { display: flex; align-items: center; gap: 10px; }
+  .sheet-title b { font-size: 16px; line-height: 20px; color: var(--text-dark); }
+  .badge {
+    min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px;
+    background: var(--primary); color: var(--on-primary);
+    font-size: 13px; line-height: 1.3; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .sheet-units { display: flex; align-items: center; gap: 10px; font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+  .sheet-units svg { color: var(--primary); transition: transform .2s ease; }
+  .sheet.is-open .sheet-units svg { transform: rotate(180deg); }
+
+  .sheet-body {
+    max-height: min(52vh, 420px); overflow-y: auto; overscroll-behavior: contain;
+    padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;
+  }
+  .sheet-day { font-size: 14px; line-height: 18px; font-weight: 700; color: var(--text-dark); padding-top: 4px; }
+  .sheet-item {
+    background: var(--mauve); border: 1px solid var(--primary-20); border-radius: 10px;
+    padding: 8px 8px 8px 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .sheet-item .t { font-size: 16px; line-height: 1.3; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .sheet-item .m { font-size: 14px; line-height: 1.3; color: var(--muted); }
+  .sheet-item.is-free .t { color: var(--free); }
+  .remove-btn { width: 44px; height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: var(--text); border-radius: 22px; }
+  .sheet-empty { font-size: 14px; line-height: 20px; color: var(--muted); text-align: center; padding: 12px 0; }
+
+  .action-bar {
+    border-top: 1px solid var(--border-10);
+    padding: 12px 16px max(40px, var(--safe-bottom));   /* button bottom edge = 40px from the screen edge */
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .guidance { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); text-align: center; }
+  .bar-row { display: flex; gap: 10px; }
+  .inline-error { font-size: 14px; line-height: 20px; color: #b3261e; text-align: center; }
+
+  /* =========================================================
+     9. SUCCESS VIEW
+     ========================================================= */
+  .success {
+    height: calc(100vh - var(--header-h) - var(--safe-top)); height: calc(100dvh - var(--header-h) - var(--safe-top));
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; text-align: center;
+    padding: 20px 20px var(--sheet-h);   /* keep content clear of the fixed Continue bar */
+  }
+  .success-badge { width: 88px; height: 88px; border-radius: 44px; background: var(--primary); color: var(--on-primary); box-shadow: var(--shadow-card); display: flex; align-items: center; justify-content: center; }
+  .success-text { display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 8px; }
+  .success-text .sub { font-size: 16px; line-height: 24px; color: var(--muted); }
+  .success .week-label { margin: 0; }
+  .success .week-label span { color: var(--text); }
+  .success-stats { display: flex; align-items: stretch; gap: 8px; width: 100%; max-width: 480px; }   /* drinks · units · drink-free days */
+  .stat-card { flex: 1 1 0; min-width: 0; background: var(--card); border-radius: 8px; padding: 12px 8px; display: flex; flex-direction: column; justify-content: space-between; gap: 4px; align-items: center; text-align: center; }
+  .stat-card .lbl { font-size: 14px; line-height: 18px; font-weight: 700; color: var(--muted); }
+  .stat-card .val { font-size: 22px; line-height: 24px; font-weight: 700; color: var(--text); }
+  .success-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; background: var(--card); border-radius: 16px 16px 0 0; filter: drop-shadow(0 2px 4px rgba(80, 89, 102, 0.2)); }
+
+  /* =========================================================
+     10. POP-UPS — custom drink + confirmations
+     ========================================================= */
+  .overlay { position: fixed; inset: 0; z-index: 70; background: rgba(10, 15, 30, 0.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .popup {
+    width: 100%; max-width: 420px; max-height: calc(100vh - 32px - var(--safe-top)); overflow-y: auto;
+    background: var(--card); border-radius: 8px; box-shadow: var(--shadow-pop);
+    padding: 22px 16px 18px; display: flex; flex-direction: column; gap: 16px;
+  }
+  .popup-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .popup-head h2 { font-size: 18px; line-height: 24px; font-weight: 700; color: var(--text); }
+  .popup-head .x { color: var(--primary); margin: -10px -10px 0 0; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; }
+  .popup p.body-reg { color: var(--muted); }
+  .field { display: flex; flex-direction: column; gap: 8px; }
+  .field-label { font-size: 14px; line-height: 18px; font-weight: 700; color: var(--text-dark); }
+  .size-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .size-tile {
+    min-height: 66px; padding: 10px 8px; border-radius: 19px;
+    background: var(--card); border: 2px solid var(--line);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+  }
+  .size-tile.is-selected { background: var(--primary-10); border-color: var(--primary); }
+  .size-tile b { font-size: 14px; line-height: 18px; color: var(--text); }
+  .size-tile span { font-size: 14px; line-height: 20px; letter-spacing: 0.14px; color: var(--muted); }
+  .numeric {
+    background: var(--mauve); border-radius: 99px; padding: 6px 8px;
+    display: grid; grid-template-columns: 40px 1fr 40px; align-items: center;
+  }
+  .numeric .val-wrap { display: flex; align-items: baseline; justify-content: center; gap: 6px; position: relative; }
+  .numeric input {
+    width: 80px; border: 0; background: transparent; text-align: center; color: #382b25;
+    font-size: 22px; line-height: 24px; font-weight: 700; padding: 0; -moz-appearance: textfield;
+  }
+  .numeric input::-webkit-outer-spin-button, .numeric input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .numeric input:focus { outline: none; border-bottom: 2px solid var(--primary); }
+  .numeric .unit { position: absolute; left: calc(50% + 46px); font-size: 16px; line-height: 24px; color: #382b25; }
+  .popup-actions { padding-top: 12px; display: flex; gap: 10px; }
+
+  /* =========================================================
+     11. LOADING SKELETON, ERRORS, VERSION
+     ========================================================= */
+  .skeleton { padding-top: 24px; }
+  .sk { background: linear-gradient(90deg, #eef0f3 25%, #f6f7f9 37%, #eef0f3 63%); background-size: 400% 100%; animation: shimmer 1.4s ease infinite; border-radius: 6px; }
+  .sk-cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin: 16px 0 24px; }
+  .spinner-wrap { display: flex; justify-content: center; padding: 28px 0; }
+  .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--primary-20); border-top-color: var(--primary); animation: spin .8s linear infinite; }
+  @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-box { margin: 24px auto 0; border: 1px solid #f2b8b5; background: #fdecea; color: #8c1d18; border-radius: 8px; padding: 14px 16px; font-size: 14px; line-height: 20px; }
+  .error-box b { display: block; font-size: 16px; margin-bottom: 4px; }
+  .error-box .btn { margin-top: 12px; min-height: 44px; }
+
+
+  /* Demo: render instantly — never show the skeleton */
+  html.demo #skeleton { display: none !important; }
+
+  /* =========================================================
+     12. RESPONSIVE
+     ========================================================= */
+  @media (max-width: 359px) {
+    .container { padding: 0 12px; }
+    .calendar { gap: 3px; }
+    .carousel { padding: 0 12px 20px; margin: 0 -12px; }
+    .size-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (min-width: 744px) {
+    :root { --header-h: 80px; }   /* iPad mini portrait and wider */
+  }
+  @media (min-width: 768px) {
+    .carousel { grid-auto-columns: 190px; }
+    .view { padding-top: 32px; }
+  }
+  /* =========================================================
+     13. MICRO-INTERACTIONS
+     ========================================================= */
+  /* Submit loading */
+  .bar-btn.is-loading, .bar-btn.is-loading:disabled { background: var(--primary); color: var(--on-primary); display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .btn-spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite; }
+
+  /* Success entrance: badge pops, tick draws, content fades up */
+  .success .success-badge { animation: pop .55s cubic-bezier(.2, 1.4, .4, 1) both; }
+  .success .success-badge path { stroke-dasharray: 42; stroke-dashoffset: 42; animation: draw .4s .35s ease-out forwards; }
+  .success .fade-up { animation: fadeUp .45s ease-out both; }
+  .success .d1 { animation-delay: .45s; } .success .d2 { animation-delay: .55s; } .success .d3 { animation-delay: .65s; }
+
+  /* Drink-free celebration — "stamp of approval" */
+  .df-icon { position: relative; width: 40px; height: 40px; }
+  .df-icon .ring { position: absolute; inset: 0; border-radius: 50%; border: 3px solid #00a88c; opacity: 0; pointer-events: none; }
+  .df-icon .spark { position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; margin: -3.5px; border-radius: 50%; opacity: 0; pointer-events: none; }
+  .celebrate .df-icon svg { animation: stamp .6s cubic-bezier(.2, 1.5, .4, 1) both; }
+  .celebrate .df-icon .ring { animation: ring .75s .15s ease-out both; }
+  .celebrate .df-icon .spark { animation: spark .7s .2s cubic-bezier(.1, .7, .3, 1) both; }
+  .celebrate .state-title { animation: fadeUp .4s .25s ease-out both; }
+  .celebrate .state-sub { animation: fadeUp .4s .35s ease-out both; }
+  .day.just-freed .d-free { display: inline-block; animation: pop .45s .1s cubic-bezier(.2, 1.4, .4, 1) both; }
+  /* ---------------------------------------------------------
+     Button states (Figma › Drinkaware-template › Button States)
+     Primary    default primary · hover primary+20% white · pressed Primary/120
+     Secondary  default 2px outline · hover primary/10 · pressed primary/30 (no outline)
+     Icon       primary / secondary follow the same colours
+     Hover only applies on devices with a real pointer, so it never sticks on touch.
+     --------------------------------------------------------- */
+  .btn, .bar-btn { transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+  .icon-btn rect { transition: fill .15s ease; }
+  .cat-card, .size-tile { transition: background-color .15s ease, border-color .15s ease; }
+  .btn-secondary, .bar-btn.secondary { border: 2px solid var(--primary); }
+  @media (hover: hover) and (pointer: fine) {
+    .btn-primary:hover:not(:disabled), .bar-btn.primary:hover:not(:disabled) { background: var(--primary-hover); color: var(--on-primary-hover); }
+    .btn-secondary:hover:not(:disabled), .bar-btn.secondary:hover:not(:disabled) { background: var(--primary-10); border-color: transparent; }
+    .icon-btn.icon-primary:hover:not(:disabled) { --ibg: var(--primary-hover); --ifg: var(--on-primary-hover); }
+    .icon-btn.icon-secondary:hover:not(:disabled) { --ibg: var(--primary-10); }
+    /* Category cards + custom-drink size tiles use the secondary button states.
+       Unselected: outline drops like a secondary button. Selected: outline stays so the selection is never lost. */
+    .cat-card:hover, .size-tile:hover { background: var(--primary-10); }
+    .size-tile:not(.is-selected):hover { border-color: transparent; }
+  }
+  .btn-primary:active:not(:disabled), .bar-btn.primary:active:not(:disabled) { background: var(--primary-pressed); color: var(--on-primary-pressed); }
+  .btn-secondary:active:not(:disabled), .bar-btn.secondary:active:not(:disabled) { background: var(--primary-30); border-color: transparent; }
+  .icon-btn.icon-primary:active:not(:disabled) { --ibg: var(--primary-pressed); --ifg: var(--on-primary-pressed); }
+  .icon-btn.icon-secondary:active:not(:disabled) { --ibg: var(--primary-30); }
+  .cat-card:active, .size-tile:active { background: var(--primary-30); }
+  .size-tile:not(.is-selected):active { border-color: transparent; }
+
+  /* Page transitions
+     • day → day: the day summary slides in the direction of travel (calendar stays put)
+     • Track drink: selection page pushes in from the right; Save / Back slides the week page back in from the left */
+  .anim-next { animation: slideFromRight .3s cubic-bezier(.2, .8, .2, 1) both; }
+  .anim-prev { animation: slideFromLeft .3s cubic-bezier(.2, .8, .2, 1) both; }
+  .anim-push { animation: slideFromRight .34s cubic-bezier(.2, .8, .2, 1) both; }
+  .anim-pop  { animation: slideFromLeft .34s cubic-bezier(.2, .8, .2, 1) both; }
+  @keyframes slideFromRight { 0% { transform: translateX(32px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
+  @keyframes slideFromLeft  { 0% { transform: translateX(-32px); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
+
+  @keyframes pop { 0% { transform: scale(0); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  @keyframes fadeUp { 0% { transform: translateY(8px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+  @keyframes stamp { 0% { transform: scale(0) rotate(-25deg); opacity: 0; } 60% { transform: scale(1.2) rotate(6deg); opacity: 1; } 100% { transform: scale(1) rotate(0); opacity: 1; } }
+  @keyframes ring { 0% { transform: scale(.6); opacity: .9; } 100% { transform: scale(2); opacity: 0; } }
+  @keyframes spark { 0% { transform: rotate(var(--a)) translateY(0) scale(.4); opacity: 1; } 100% { transform: rotate(var(--a)) translateY(-36px) scale(1); opacity: 0; } }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+  <!-- Activity header (close button bottom-right) -->
+  <header class="activity-header">
+    <button id="closeBtn" class="close-btn" data-action="close" aria-label="Close activity">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <!-- Light skeleton loader with subtle spinner (hidden once init completes) -->
+  <div id="skeleton" class="skeleton container" aria-busy="true" aria-label="Loading">
+    <div class="sk" style="height:24px;width:55%"></div>
+    <div class="sk" style="height:16px;width:85%;margin-top:10px"></div>
+    <div class="sk-cal"><div class="sk" style="height:110px"></div><div class="sk" style="height:110px"></div><div class="sk" style="height:110px"></div><div class="sk" style="height:110px"></div><div class="sk" style="height:110px"></div><div class="sk" style="height:110px"></div><div class="sk" style="height:110px"></div></div>
+    <div class="sk" style="height:200px;border-radius:12px"></div>
+    <div class="spinner-wrap"><div class="spinner"></div></div>
+  </div>
+
+  <main id="view" class="view" hidden></main>
+  <div id="scrim" class="scrim" data-action="sheet-close" hidden></div>
+  <section id="sheet" class="sheet" aria-label="Drinks this week" hidden></section>
+  <div id="successBar" class="success-bar" hidden></div>
+  <div id="modalRoot"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* =====================================================================
+     0. CONSTANTS
+     ===================================================================== */
+  const TEMPLATE_VERSION = 'v1.15';             // ← bump on every iteration (for devs; not shown in the UI)
+  const DEMO = window.DRINK_TRACKER_DEMO || null; // set only by the demo file
+  const INIT_TIMEOUT_MS = 15000;
+  const THEME_TIMEOUT_MS = 5000;
+  const SHEET_ANIM_MS = 320;      // bottom sheet slide duration (keep in sync with CSS)
+  const SWIPE_MIN_PX = 60;        // horizontal drag needed to change day on the main page
+  const SUBMIT_MIN_MS = 1200;     // minimum 'Submitting…' time so the confirmation feels deliberate
+  const SUBMIT_ACK_MAX_MS = 2500; // stop waiting for save acknowledgements after this
+
+  // Main page heading / description — each used only when its TEXT_CONTENT block is missing or empty
+  const DEFAULT_INTRO = { heading: 'Log your week', description: 'Track what you drank on each day or mark a day as drink-free.' };
+
+  // Question Labels expected in Creator. Override per activity with
+  // CONFIG.questionLabels = { totalDrinks: 'my_label', ... }.
+  const QUESTION_LABELS = {
+    heading: 'heading',            // TEXT_CONTENT block → main page heading
+    description: 'description',    // TEXT_CONTENT block → text under the heading
+    drinksSelected: 'drinks_selected',
+    totalDrinks: 'total_drinks',
+    totalUnits: 'total_units',
+    drinkFreeDays: 'drink_free_days',
+    days: ['day_1', 'day_2', 'day_3', 'day_4', 'day_5', 'day_6', 'day_7']
+  };
+
+  /* =====================================================================
+     1. DRINK CATALOGUE  (category → ABV → sizes in ml)
+     Preset option Label on the MULTISELECT question = `${category}_${size}`,
+     custom drinks = `${category}_custom` (or a single `custom`).
+     ===================================================================== */
+  const BEER_SIZES = [['half_pint', 'Half pint', 284], ['pint', 'Pint', 568], ['bottle_can', 'Bottle/can', 330], ['can', 'Can', 440]];
+  const CATEGORIES = [
+    { id: 'beer', name: 'Beer or ale', sub: 'Pints, bottles and cans', abv: 4, color: '#613ca8', icon: 'beer', sizes: BEER_SIZES },
+    { id: 'cider', name: 'Cider', sub: 'Pints, bottles and cans', abv: 5, color: '#a34a00', icon: 'cider', sizes: BEER_SIZES },
+    { id: 'wine', name: 'Wine', sub: 'Red, white or sparkling', abv: 12, color: '#8c2f4b', icon: 'wine',
+      sizes: [['small_glass', 'Small glass', 125], ['medium_glass', 'Medium glass', 175], ['large_glass', 'Large glass', 250], ['bottle', 'Bottle', 750]] },
+    { id: 'spirits', name: 'Spirits', sub: 'Single or double', abv: 40, color: '#2f6e95', icon: 'spirits',
+      sizes: [['single', 'Single measure', 25], ['double', 'Double measure', 50]] },
+    { id: 'fortified', name: 'Fortified wine', sub: 'e.g. port or sherry', abv: 18, color: '#0a3c64', icon: 'fortified',
+      sizes: [['single', 'Single measure', 50], ['double', 'Double measure', 70]] },
+    { id: 'premix', name: 'Pre-mixed cocktail', sub: 'Small or large can', abv: 6, color: '#b0135a', icon: 'premix',
+      sizes: [['small_can', 'Small can', 125], ['large_can', 'Large can', 250]] },
+    // Alcohol-free / low alcohol: no subtitle, but the card keeps the same height as the others
+    { id: 'lowno', name: 'Alcohol-free / low alcohol', sub: '', abv: 0.5, color: '#2e7d5b', icon: 'lowno',
+      sizes: [['single', 'Single measure', 25], ['double', 'Double measure', 50], ['small_glass', 'Small glass', 125],
+              ['medium_glass', 'Medium glass', 175], ['large_glass', 'Large glass', 250], ['half_pint', 'Half pint', 284],
+              ['can_bottle', 'Can/bottle', 330], ['can', 'Can', 440], ['pint', 'Pint', 568], ['wine_bottle', 'Wine bottle', 750]] }
+  ];
+  const catById = id => CATEGORIES.find(c => c.id === id);
+
+  /* =====================================================================
+     2. ICONS — exported from the Figma file; colours swapped for theme vars
+     ===================================================================== */
+  const sw = 'stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
+  const ICONS = {
+    beer: `<path d="M6.5 4H16.5L15.5 20H7.5L6.5 4Z" ${sw}/><path d="M16.5 8H19C19.2652 8 19.5196 8.10536 19.7071 8.29289C19.8946 8.48043 20 8.73478 20 9V14C20 14.2652 19.8946 14.5196 19.7071 14.7071C19.5196 14.8946 19.2652 15 19 15H16" ${sw}/><path d="M6.60001 7.5H16.4" ${sw}/>`,
+    cider: `<path d="M12 7.50002C10.5 6.30002 6.50002 6.00002 5.50002 10C4.70002 13.3 6.70002 19 9.50002 19.5C10.5 19.7 11.1 19.1 12 19.1C12.9 19.1 13.5 19.7 14.5 19.5C17.3 19 19.3 13.3 18.5 10C17.5 6.00002 13.5 6.30002 12 7.50002Z" ${sw}/><path d="M12 7.5C12 5.5 13 4 14.5 3.5" ${sw}/>`,
+    wine: `<path d="M8 3H16C16 8 15 11 12 11C9 11 8 8 8 3Z" ${sw}/><path d="M12 11V20" ${sw}/><path d="M8.5 20H15.5" ${sw}/>`,
+    spirits: `<path d="M6 4H18L16.5 20H7.5L6 4Z" ${sw}/><path d="M6.59998 10H17.4" ${sw}/>`,
+    fortified: `<path d="M8 4H16L15 11C15 11.7956 14.6839 12.5587 14.1213 13.1213C13.5587 13.6839 12.7956 14 12 14C11.2044 14 10.4413 13.6839 9.87868 13.1213C9.31607 12.5587 9 11.7956 9 11L8 4Z" ${sw}/><path d="M12 14V20" ${sw}/><path d="M9 20H15" ${sw}/>`,
+    premix: `<path d="M8 3.5H16L17 5.5V18.5L16 20.5H8L7 18.5V5.5L8 3.5Z" ${sw}/><path d="M7 7H17M7 17H17" ${sw}/>`,
+    lowno: `<path d="M10 2.5H14V6L16 9V20C16 20.3978 15.842 20.7794 15.5607 21.0607C15.2794 21.342 14.8978 21.5 14.5 21.5H9.5C9.10218 21.5 8.72064 21.342 8.43934 21.0607C8.15804 20.7794 8 20.3978 8 20V9L10 6V2.5Z" ${sw}/><path d="M12 17.3C13.2702 17.3 14.3 16.2703 14.3 15C14.3 13.7298 13.2702 12.7 12 12.7C10.7297 12.7 9.69995 13.7298 9.69995 15C9.69995 16.2703 10.7297 17.3 12 17.3Z" ${sw}/>`
+  };
+  const svg24 = inner => `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">${inner}</svg>`;
+  const ICON = {
+    category: id => svg24(ICONS[id]),
+    calendar: () => `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M18 5H6C4.34315 5 3 6.34315 3 8V18C3 19.6569 4.34315 21 6 21H18C19.6569 21 21 19.6569 21 18V8C21 6.34315 19.6569 5 18 5Z" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 10H21M8 3V7M16 3V7" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    chevron: () => `<svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M15 13L10 8L5 13" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    close: (s = 24) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    removeX: () => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.2 3.2L12.8 12.8M12.8 3.2L3.2 12.8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
+    plusLink: () => `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 6V18M6 12H18" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    plusBtn: (s = 32) => `<svg width="${s}" height="${s}" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect width="32" height="32" rx="16" style="fill:var(--ibg, var(--primary))"/><path d="M16 10V22M10 16H22" style="stroke:var(--ifg, var(--on-primary))" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    minusBtn: (s = 32) => `<svg width="${s}" height="${s}" viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect width="32" height="32" rx="16" style="fill:var(--ibg, #ffffff)"/><path d="M10 16H22" stroke="#202429" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    check: () => `<svg width="48" height="48" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M10 25L19 34L38 14" stroke="currentColor" stroke-width="5.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    glass: () => `<svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M9.14062 13.6666C9.14062 15.125 9.54688 16.4166 10.2375 17.375C10.4813 17.75 10.6437 18.1666 10.6844 18.625L12.0656 32.125C12.2281 33.6666 13.5281 34.8333 15.0312 34.8333H23.8875C25.3906 34.8333 26.65 33.6666 26.8531 32.125L28.2344 18.625C28.275 18.1666 28.4375 17.75 28.6812 17.375C29.3719 16.4583 29.7781 15.125 29.7781 13.6666C29.7781 13.3333 29.7375 13 29.6969 12.7083H9.22188C9.18125 13.0416 9.14062 13.375 9.14062 13.6666Z" fill="#F39631"/><path d="M15.0719 30.875C14.6656 30.875 14.3 30.5416 14.2594 30.125L13.1219 18.875C13.0812 18.4166 13.4062 18 13.8531 17.9583C14.3 17.9166 14.7062 18.25 14.7469 18.7083L15.8844 29.9583C15.925 30.4166 15.6 30.8333 15.1531 30.875C15.1125 30.875 15.1125 30.875 15.0719 30.875Z" fill="#FAD5AD"/><path d="M9.79062 9.87498C9.79062 9.99998 9.79062 10.125 9.79062 10.25H29.1687C29.1687 10.125 29.1687 9.99998 29.1687 9.87498L29.5344 6.33331C29.6156 5.74998 29.1281 5.20831 28.5594 5.20831H10.4406C9.87187 5.20831 9.38437 5.74998 9.46562 6.33331L9.79062 9.87498Z" fill="#C4EBF8"/><path d="M9.62813 11.125C9.425 11.625 9.30313 12.1667 9.22188 12.7083H29.7781C29.6969 12.125 29.575 11.5833 29.3719 11.125C29.25 10.8333 29.2094 10.5417 29.1688 10.25H9.83125C9.79063 10.5417 9.75 10.8333 9.62813 11.125Z" fill="#F8F8F4"/></svg>`,
+    drinkFree: () => `<svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M9.14062 13.6666C9.14062 15.125 9.54688 16.4166 10.2375 17.375C10.4813 17.75 10.6437 18.1666 10.6844 18.625L12.0656 32.125C12.2281 33.6666 13.5281 34.8333 15.0313 34.8333H23.8875C25.3906 34.8333 26.65 33.6666 26.8531 32.125L28.2344 18.625C28.275 18.1666 28.4375 17.75 28.6813 17.375C29.3719 16.4583 29.7781 15.125 29.7781 13.6666C29.7781 13.3333 29.7375 13 29.6969 12.7083H9.22188C9.18125 13.0416 9.14062 13.375 9.14062 13.6666Z" fill="#F39631"/><path d="M15.0718 30.875C14.6656 30.875 14.3 30.5416 14.2593 30.125L13.1218 18.875C13.0812 18.4166 13.4062 18 13.8531 17.9583C14.3 17.9166 14.7062 18.25 14.7468 18.7083L15.8843 29.9583C15.925 30.4166 15.6 30.8333 15.1531 30.875C15.1125 30.875 15.1125 30.875 15.0718 30.875Z" fill="#FAD5AD"/><path d="M9.79068 9.87498C9.79068 9.99998 9.79068 10.125 9.79068 10.25H29.1688C29.1688 10.125 29.1688 9.99998 29.1688 9.87498L29.5344 6.33331C29.6157 5.74998 29.1282 5.20831 28.5594 5.20831H10.4407C9.87193 5.20831 9.38443 5.74998 9.46568 6.33331L9.79068 9.87498Z" fill="#C4EBF8"/><path d="M9.62817 11.125C9.42505 11.625 9.30317 12.1667 9.22192 12.7083H29.7782C29.6969 12.125 29.575 11.5833 29.3719 11.125C29.25 10.8333 29.2094 10.5417 29.1688 10.25H9.8313C9.79067 10.5417 9.75005 10.8333 9.62817 11.125Z" fill="#F8F8F4"/><circle cx="20" cy="20" r="18" stroke="#00A88C" stroke-width="3"/><path d="M8.13965 32.093L31.8606 8.83722" stroke="#00A88C" stroke-width="3" stroke-linecap="round"/></svg>`
+  };
+
+  /* =====================================================================
+     3. STATE
+     ===================================================================== */
+  const init = {};        // raw init messages from the host app, keyed by message key
+  let started = false;
+  const state = {
+    days: [],             // [{ date: Date, status: 'empty'|'drinks'|'free', items: Item[] }]
+    selected: 0,          // index of the day being viewed (0 = furthest date)
+    view: 'main',         // 'main' | 'track' | 'success'
+    draft: null,          // { dayIndex, items } while on the Track drink view
+    customLibrary: [],    // custom drinks created this session — offered on every day (not persisted)
+    activeCat: 'beer',
+    sheetOpen: false,
+    submitting: false,
+    anim: null,           // one-shot transition class for the next render: 'next' | 'prev' | 'push' | 'pop'
+    celebrate: null,      // day index whose drink-free celebration should play on next render
+    modal: null,          // pop-up state (custom drink / confirm)
+    submitted: false,
+    submitError: '',
+    config: {},
+    intro: DEFAULT_INTRO, // { heading, description } for the main page — see readIntro()
+    questions: null       // resolved question indices — see mapQuestions()
+  };
+  // Item = { key, cat, sizeId, name, ml, abv, qty, custom }
+  const startedAt = Date.now();
+  let hasQuit = false;
+
+  /* =====================================================================
+     4. COGNISS MESSAGE BRIDGE
+     ===================================================================== */
+  const isNative = typeof window.ReactNativeWebView !== 'undefined';
+  let ackCount = 0, ackWaiter = null;
+
+  function postToApp(key, data = null) {
+    if (DEMO) { console.log('[demo] →', key, data); return; }
+    const text = JSON.stringify({ key, data });
+    if (isNative) window.ReactNativeWebView.postMessage(text);
+    else window.parent.postMessage(text, '*');
+  }
+
+  // REST_REQUEST fields must be top-level (not nested under data) — do not route via postToApp.
+  let reqId = 0;
+  const pending = {};
+  function restRequest(method, model, data, specialParams) {
+    return new Promise((resolve, reject) => {
+      const id = 'req-' + (++reqId);
+      pending[id] = { resolve, reject };
+      const text = JSON.stringify({ key: 'REST_REQUEST', method, model, data, id, specialParams: specialParams || null });
+      if (isNative) window.ReactNativeWebView.postMessage(text);
+      else window.parent.postMessage(text, '*');
+    });
+  }
+  const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+  function onMessage(event) {
+    try {
+      const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+      if (!msg || !msg.key) return;
+      handleMessage(msg);
+    } catch (e) { /* ignore non-JSON messages */ }
+  }
+  document.addEventListener('message', onMessage);   // Android React Native
+  window.addEventListener('message', onMessage);     // iOS React Native + web
+
+  const REQUIRED = ['API', 'USER', 'AUTH', 'ACTIVITY', 'ACTIVITY_RESPONSE', 'CONFIG', 'QUESTIONS'];
+
+  function handleMessage(msg) {
+    if (msg.key === 'REQUEST_RESPONSE') {
+      const p = pending[msg.id];
+      if (p) { delete pending[msg.id]; msg.error ? p.reject(new Error(msg.error)) : p.resolve(msg.data); }
+      return;
+    }
+    if (msg.key === 'QUESTION_RESPONSE') { ackCount++; if (ackWaiter) ackWaiter(); return; } // save acknowledgement from the container
+    init[msg.key] = msg.data;
+    if (!started && REQUIRED.every(k => init[k] !== undefined)) { started = true; startTemplate(); }
+  }
+
+  /* =====================================================================
+     5. THEME — App theme with platform Settings fallback
+     ===================================================================== */
+  const FONT_MAP = { LATO: 'Lato', ROBOTO: 'Roboto', OPEN_SANS: 'Open Sans', MONTSERRAT: 'Montserrat', POPPINS: 'Poppins',
+    NUNITO: 'Nunito', NUNITO_SANS: 'Nunito Sans', INTER: 'Inter', RALEWAY: 'Raleway', SOURCE_SANS_PRO: 'Source Sans 3',
+    MULISH: 'Mulish', WORK_SANS: 'Work Sans', OSWALD: 'Oswald', PT_SANS: 'PT Sans', QUICKSAND: 'Quicksand' };
+
+  async function loadTheme() {
+    try {
+      const [app, settings] = await Promise.all([
+        withTimeout(restRequest('get', 'App', init.ACTIVITY_RESPONSE && init.ACTIVITY_RESPONSE.app), THEME_TIMEOUT_MS).catch(() => ({})),
+        withTimeout(restRequest('list', 'Settings', {}), THEME_TIMEOUT_MS).catch(() => ({ items: [] }))
+      ]);
+      const a = (app && app.theme) || {};
+      const s = (settings && settings.items && settings.items[0] && settings.items[0].theme) || {};
+      return {
+        colors: Object.assign({}, s.colors, a.colors),
+        font: a.font || s.font,
+        activityHeader: a.activityHeader || s.activityHeader
+      };
+    } catch (e) { return {}; }
+  }
+
+  // --- colour helpers ---
+  function hexToRgb(hex) {
+    if (!hex || typeof hex !== 'string') return null;
+    let h = hex.trim().replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  function luminance(rgb) {
+    const c = rgb.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+  const contrast = (a, b) => { const l1 = luminance(a), l2 = luminance(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); };
+  // White label unless contrast < 4.5:1 (WCAG AA), then black if that reads better.
+  function readableOn(hex) {
+    const rgb = hexToRgb(hex); if (!rgb) return '#ffffff';
+    const w = contrast(rgb, [255, 255, 255]), k = contrast(rgb, [0, 0, 0]);
+    return w >= 4.5 ? '#ffffff' : (k > w ? '#000000' : '#ffffff');
+  }
+  function tint(hex, pct) { // mix with white — reproduces primary/10 and primary/20
+    const rgb = hexToRgb(hex); if (!rgb) return null;
+    const m = rgb.map(v => Math.round(v * pct + 255 * (1 - pct)));
+    return '#' + m.map(v => v.toString(16).padStart(2, '0')).join('');
+  }
+
+  function shade(hex, pct) { // mix with black — reproduces Primary/120
+    const rgb = hexToRgb(hex); if (!rgb) return null;
+    return '#' + rgb.map(v => Math.round(v * pct).toString(16).padStart(2, '0')).join('');
+  }
+
+  function applyTheme(theme) {
+    const root = document.documentElement.style;
+    const c = (theme && theme.colors) || {};
+    const primary = hexToRgb(c.primary) ? c.primary : '#613ca8';
+    root.setProperty('--primary', primary);
+    root.setProperty('--on-primary', readableOn(primary));
+    // Tints + button states (Figma › Button States). For the design's own purple the
+    // exact Figma values in :root are kept; any other app primary gets them derived.
+    if (primary.toLowerCase() !== '#613ca8') {
+      const hover = tint(primary, 0.80), pressed = shade(primary, 0.80);
+      root.setProperty('--primary-10', tint(primary, 0.10));
+      root.setProperty('--primary-20', tint(primary, 0.20));
+      root.setProperty('--primary-30', tint(primary, 0.30));
+      root.setProperty('--primary-hover', hover);
+      root.setProperty('--primary-pressed', pressed);
+      root.setProperty('--on-primary-hover', readableOn(hover));
+      root.setProperty('--on-primary-pressed', readableOn(pressed));
+    }
+    if (hexToRgb(c.dark)) root.setProperty('--text-dark', c.dark);
+    if (hexToRgb(c.light)) root.setProperty('--bg', c.light);   // success page keeps its fixed #F5F5FB
+    const hdr = theme && theme.activityHeader && hexToRgb(theme.activityHeader.color) ? theme.activityHeader.color : '#0a3c64';
+    root.setProperty('--header-bg', hdr);
+    root.setProperty('--header-fg', readableOn(hdr));
+    // App font (falls back to Lato)
+    const fam = theme && FONT_MAP[String(theme.font || '').toUpperCase()];
+    if (fam && fam !== 'Lato') {
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?family=' + encodeURIComponent(fam).replace(/%20/g, '+') + ':wght@400;700&display=swap';
+      document.head.appendChild(link);
+      root.setProperty('--font', `'${fam}', 'Lato', system-ui, sans-serif`);
+    }
+  }
+
+  /* =====================================================================
+     6. DATES & CALCULATIONS
+     ===================================================================== */
+  // Last 7 days: today-7 … yesterday (furthest date first)
+  function buildWeek(now = new Date()) {
+    const days = [];
+    for (let i = 7; i >= 1; i--) days.push({ date: new Date(now.getFullYear(), now.getMonth(), now.getDate() - i), status: 'empty', items: [] });
+    return days;
+  }
+  const fmt = (d, o) => d.toLocaleDateString('en-GB', o);
+  const dayLong = d => fmt(d, { weekday: 'long' }) + ', ' + fmt(d, { day: 'numeric', month: 'long' });
+  const weekRange = () => `${fmt(state.days[0].date, { day: 'numeric', month: 'long' })} – ${fmt(state.days[6].date, { day: 'numeric', month: 'long' })}`;
+
+  const round1 = n => Math.round((n + Number.EPSILON) * 10) / 10;
+  const itemUnitsExact = it => (it.ml * it.abv / 1000) * it.qty;              // Units = (ml × ABV%) ÷ 1000
+  const itemsUnits = items => items.reduce((s, it) => s + itemUnitsExact(it), 0);
+  const itemsQty = items => items.reduce((s, it) => s + it.qty, 0);
+  const fmtUnits = n => (n === 0 ? '0' : round1(n).toFixed(1));
+  const fmtNum = n => String(round1(n)).replace(/\.0$/, '');
+
+  // Items for a day, including the unsaved draft when it is being edited
+  const effItems = i => (state.draft && state.draft.dayIndex === i ? state.draft.items : state.days[i].items);
+  function effStatus(i) {
+    if (state.draft && state.draft.dayIndex === i) return itemsQty(state.draft.items) > 0 ? 'drinks' : (state.days[i].status === 'free' ? 'free' : 'empty');
+    return state.days[i].status;
+  }
+  function weekTotals() {
+    let units = 0, qty = 0;
+    state.days.forEach((_, i) => { const its = effItems(i); units += itemsUnits(its); qty += itemsQty(its); });
+    return { units, qty };
+  }
+  const allLogged = () => state.days.every(d => d.status !== 'empty');
+
+  /* =====================================================================
+     7. RENDERING
+     ===================================================================== */
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function render() {
+    document.body.classList.toggle('is-success', state.view === 'success');
+    document.documentElement.classList.toggle('is-success', state.view === 'success');
+    const view = $('view');
+    const carousel = view.querySelector('.carousel');
+    const carouselX = carousel ? carousel.scrollLeft : 0;
+
+    if (state.view === 'main') view.innerHTML = renderMain();
+    else if (state.view === 'track') view.innerHTML = renderTrack();
+    else view.innerHTML = renderSuccess();
+
+    // One-shot page transition (consumed here so later re-renders don't replay it)
+    if (state.anim) {
+      const target = (state.anim === 'next' || state.anim === 'prev') ? view.querySelector('.day-summary') : view.querySelector('.container');
+      if (target) target.classList.add('anim-' + state.anim);
+      state.anim = null;
+    }
+
+    const nc = view.querySelector('.carousel');
+    if (nc) { nc.scrollLeft = carouselX; bindCarouselDrag(nc); }
+
+    renderSheet();
+    renderModal();
+  }
+
+  // ---------- Main view ----------
+  function renderMain() {
+    const i = state.selected;
+    return `
+      <div class="container">
+        <div class="heading">
+          <h1 class="h2">${esc(state.intro.heading)}</h1>
+          ${state.intro.description ? `<p class="body-reg">${esc(state.intro.description)}</p>` : ''}
+        </div>
+        <div class="week-label">${ICON.calendar()}<span>${esc(weekRange())}</span></div>
+        <div class="calendar" role="tablist" aria-label="Days to log">${state.days.map(renderDayCell).join('')}</div>
+        ${renderDaySummary()}
+      </div>`;
+  }
+
+  // Everything below the calendar and above the bottom sheet (the swipeable area)
+  function renderDaySummary() {
+    const day = state.days[state.selected];
+    const units = itemsUnits(day.items), qty = itemsQty(day.items);
+    return `<section class="day-summary" aria-live="polite" aria-roledescription="swipe left or right to change day">
+          <div class="summary-header">
+            <p>${esc(dayLong(day.date))}</p>
+            ${day.status === 'drinks' ? `<span>${fmtUnits(units)} units</span>` : ''}
+          </div>
+          <div class="summary-card">${renderSummaryBody(day, units, qty)}</div>
+        </section>`;
+  }
+
+  function renderDayCell(d, i) {
+    const sel = i === state.selected;
+    const cls = ['day', sel ? 'is-selected' : '', d.status === 'drinks' ? 'has-drinks' : '', d.status === 'free' ? 'is-free' : '', state.celebrate === i ? 'just-freed' : ''].join(' ');
+    let bottom = '', label = 'not logged';
+    if (d.status === 'drinks') { const u = fmtUnits(itemsUnits(d.items)); bottom = `<span class="d-units"><b>${u}</b><small>units</small></span>`; label = `${u} units`; }
+    if (d.status === 'free') { bottom = `<span class="d-free">Drink free day</span>`; label = 'drink-free day'; }
+    return `<button class="${cls}" role="tab" aria-selected="${sel}" data-action="select-day" data-i="${i}" aria-label="${esc(dayLong(d.date))}, ${label}">
+        <span class="day-top"><span class="dow">${fmt(d.date, { weekday: 'short' })}</span><span class="dom">${d.date.getDate()}</span></span>
+        <span class="day-bottom">${bottom}</span>
+      </button>`;
+  }
+
+  function renderSummaryBody(day, units, qty) {
+    const freeBtn = (done) => `<button class="btn btn-secondary ${done ? 'is-done' : ''}" data-action="mark-free" ${done ? 'disabled aria-disabled="true"' : ''}>Mark as drink-free day</button>`;
+    if (day.status === 'drinks') {
+      return `<div class="summary-state">${ICON.glass()}<p class="state-title">Drinks added</p>
+          <div class="stats"><div><p class="lbl">Total units</p><p class="val">${fmtUnits(units)}</p></div><div><p class="lbl">Total drinks</p><p class="val">${qty}</p></div></div>
+        </div>
+        <div class="summary-actions"><button class="btn btn-primary" data-action="track">Edit drink</button>${freeBtn(false)}</div>`;
+    }
+    if (day.status === 'free') {
+      const party = state.celebrate === state.selected;
+      const sparks = party ? ['#00a88c', 'var(--primary)', '#f39631', '#00a88c', 'var(--primary)', '#f39631', '#00a88c', 'var(--primary)']
+        .map((c, k) => `<i class="spark" style="--a:${k * 45}deg;background:${c}"></i>`).join('') : '';
+      return `<div class="summary-state ${party ? 'celebrate' : ''}">
+          <span class="df-icon">${party ? '<i class="ring"></i>' : ''}${sparks}${ICON.drinkFree()}</span>
+          <p class="state-title">Drink-free Day</p><p class="state-sub">Well done!</p>
+        </div>
+        <div class="summary-actions"><button class="btn btn-primary" data-action="track">Track drink</button>${freeBtn(true)}</div>`;
+    }
+    return `<div class="summary-state">${ICON.glass()}<p class="empty-text">No drinks added yet</p></div>
+      <div class="summary-actions"><button class="btn btn-primary" data-action="track">Track drink</button>${freeBtn(false)}</div>`;
+  }
+
+  // ---------- Track drink view ----------
+  function renderTrack() {
+    const day = state.days[state.draft.dayIndex];
+    const cat = catById(state.activeCat);
+    const items = state.draft.items;
+    const qtyOf = key => (items.find(it => it.key === key) || {}).qty || 0;
+    const customs = state.customLibrary.filter(c => c.cat === cat.id);   // remembered across days
+
+    const cards = CATEGORIES.map(c => {
+      return `<button class="cat-card ${c.id === cat.id ? 'is-selected' : ''}" style="--cat:${c.color}" data-action="cat" data-cat="${c.id}" aria-pressed="${c.id === cat.id}">
+          <span class="cat-tile">${ICON.category(c.icon)}</span>
+          <span><span class="cat-name" style="display:block">${esc(c.name)}</span>${c.sub ? `<span class="cat-sub" style="display:block">${esc(c.sub)}</span>` : ''}</span>
+        </button>`;
+    }).join('');
+
+    const presetRows = cat.sizes.map(([sid, name, ml]) => {
+      const key = `${cat.id}_${sid}`;
+      return drinkRow({ key, name, meta: `${ml} ml, ${fmtNum(cat.abv)}% ABV`, qty: qtyOf(key), custom: false });
+    }).join('');
+    const customRows = customs.map(c => drinkRow({ key: c.key, name: c.name, meta: `${c.ml} ml, ${fmtNum(c.abv)}% ABV`, qty: qtyOf(c.key), custom: true })).join('');
+
+    return `
+      <div class="container">
+        <div class="heading heading--track">
+          <h1 class="h2">${esc(dayLong(day.date))}</h1>
+          <p class="body-reg">Track your drink on this day</p>
+        </div>
+        <div class="carousel" role="toolbar" aria-label="Drink categories — swipe for more">${cards}</div>
+        <section class="panel" style="--cat:${cat.color}" aria-label="${esc(cat.name)}">
+          <div class="panel-head"><h2>${esc(cat.name)}</h2><span>Add how many you had</span></div>
+          <div class="drinks">
+            ${presetRows}
+            ${customRows ? `<p class="custom-label">Your custom drinks</p>${customRows}` : ''}
+          </div>
+          <button class="add-custom" data-action="open-custom">${ICON.plusLink()}<span>Add a custom drink</span></button>
+        </section>
+      </div>`;
+  }
+
+  // − button + quantity (shown once a drink has been added)
+  const stepperLead = (key, name, qty) =>
+    `<button class="icon-btn icon-secondary" data-action="dec" data-key="${esc(key)}" aria-label="Remove one ${esc(name)}">${ICON.minusBtn()}</button>` +
+    `<span class="qty" aria-live="polite">${qty}</span>`;
+
+  /* In-place update of one drink row after + / −.
+     Only the row's highlight, − button and number change — the + button under the
+     user's finger, the panel, carousel and heading are left untouched, so rapid
+     tapping never redraws the page (which caused a visible jump/flash on phones). */
+  function patchDrinkRow(key) {
+    const plus = document.querySelector(`.drink-row [data-action="inc"][data-key="${CSS.escape(key)}"]`);
+    if (!plus) return;
+    const row = plus.closest('.drink-row'), stepper = plus.parentElement;
+    const it = state.draft && state.draft.items.find(x => x.key === key);
+    const qty = it ? it.qty : 0;
+    row.classList.toggle('is-active', qty > 0);
+    const minus = stepper.querySelector('[data-action="dec"]'), num = stepper.querySelector('.qty');
+    if (qty > 0) {
+      if (num) num.textContent = qty;
+      else stepper.insertAdjacentHTML('afterbegin', stepperLead(key, plus.dataset.name || '', qty));
+    } else {
+      const hadFocus = minus && minus === document.activeElement;
+      if (minus) minus.remove();
+      if (num) num.remove();
+      if (hadFocus) plus.focus({ preventScroll: true });   // keyboard users keep their place
+    }
+  }
+
+  function drinkRow({ key, name, meta, qty, custom }) {
+    return `<div class="drink-row ${qty > 0 ? 'is-active' : ''}">
+        <div class="drink-text">
+          <p class="drink-name">${esc(name)}${custom ? '<span class="tag-custom">Custom</span>' : ''}</p>
+          <p class="drink-meta">${esc(meta)}</p>
+        </div>
+        <div class="stepper">
+          ${qty > 0 ? stepperLead(key, name, qty) : ''}
+          <button class="icon-btn icon-primary" data-action="inc" data-key="${esc(key)}" data-name="${esc(name)}" aria-label="Add one ${esc(name)}">${ICON.plusBtn()}</button>
+        </div>
+      </div>`;
+  }
+
+  // ---------- Success view ----------
+  function renderSuccess() {
+    const t = weekTotals();
+    return `<div class="success" role="status">
+        <div class="success-text">
+          <div class="success-badge">${ICON.check()}</div>
+          <h1 class="h2 fade-up d1">Record submitted</h1>
+          <p class="sub fade-up d1">Your drinks this week have been saved.</p>
+        </div>
+        <div class="week-label fade-up d2">${ICON.calendar()}<span>${esc(weekRange())}</span></div>
+        <div class="success-stats fade-up d3">
+          <div class="stat-card"><p class="lbl">Total drinks</p><p class="val">${t.qty}</p></div>
+          <div class="stat-card"><p class="lbl">Total units</p><p class="val">${fmtUnits(t.units)}</p></div>
+          <div class="stat-card"><p class="lbl">Drink-free days</p><p class="val">${state.days.filter(d => d.status === 'free').length}</p></div>
+        </div>
+      </div>`;
+  }
+
+  // ---------- Bottom sheet ----------
+  function renderSheet() {
+    const sheet = $('sheet'), scrim = $('scrim'), bar = $('successBar');
+    if (state.view === 'success') {
+      sheet.hidden = true; scrim.hidden = true;
+      bar.hidden = false;
+      bar.innerHTML = `<div class="sheet-inner"><div class="action-bar" style="border-top:0"><div class="bar-row"><button class="bar-btn primary" data-action="continue">Continue</button></div></div></div>`;
+      measureSheet(bar);
+      return;
+    }
+    bar.hidden = true;
+    sheet.hidden = false;
+    const body = sheet.querySelector('.sheet-body');
+    const bodyScroll = body ? body.scrollTop : 0;
+    const t = weekTotals();
+    const complete = allLogged();
+
+    let actions;
+    if (state.view === 'track') {
+      actions = `<div class="bar-row"><button class="bar-btn secondary" data-action="back">Back</button><button class="bar-btn primary" data-action="save">Save</button></div>`;
+    } else {
+      const busy = state.submitting;
+      actions = `<p class="guidance" id="guidance" aria-live="polite">${busy ? 'Saving your week…' : complete ? 'All 7 days logged. You can now submit.' : 'Log all 7 days to enable Submit.'}</p>
+        ${state.submitError ? `<p class="inline-error" role="alert">${esc(state.submitError)}</p>` : ''}
+        <div class="bar-row"><button class="bar-btn primary ${busy ? 'is-loading' : ''}" data-action="submit" ${complete && !busy ? '' : 'disabled'} aria-describedby="guidance">${busy ? '<span class="btn-spinner" aria-hidden="true"></span>Submitting…' : 'Submit'}</button></div>`;
+    }
+
+    sheet.classList.toggle('is-open', state.sheetOpen);
+    sheet.innerHTML = `<div class="sheet-inner">
+        <button class="sheet-toggle" data-action="sheet-toggle" aria-expanded="${state.sheetOpen}" aria-controls="sheetBody">
+          <span class="sheet-handle"><i></i></span>
+          <span class="sheet-row">
+            <span class="sheet-title"><b>Drinks this week</b><span class="badge">${t.qty}</span></span>
+            <span class="sheet-units">${fmtUnits(t.units)} units${ICON.chevron()}</span>
+          </span>
+        </button>
+        <div class="sheet-collapse" id="sheetCollapse" style="height:${state.sheetOpen ? 'auto' : '0px'}" ${state.sheetOpen ? '' : 'inert aria-hidden="true"'}>
+          <div class="sheet-body" id="sheetBody">${renderSheetList()}</div>
+        </div>
+        <div class="action-bar">${actions}</div>
+      </div>`;
+    clearTimeout(sheetAnimTimer);
+    scrim.hidden = !state.sheetOpen;
+    scrim.classList.toggle('is-visible', state.sheetOpen);
+    const nb = sheet.querySelector('.sheet-body'); if (nb) nb.scrollTop = bodyScroll;
+    bindSheetSwipe(sheet.querySelector('.sheet-toggle'));
+    measureSheet(sheet);
+  }
+
+  // Slide the sheet between collapsed and expanded (animates height + scrim fade)
+  let sheetAnimTimer = null;
+  function setSheetOpen(open) {
+    if (open === state.sheetOpen) return;
+    const sheet = $('sheet'), c = $('sheetCollapse'), scrim = $('scrim');
+    state.sheetOpen = open;
+    if (!c) { renderSheet(); return; }
+    clearTimeout(sheetAnimTimer);
+    sheet.classList.toggle('is-open', open);
+    sheet.querySelector('.sheet-toggle').setAttribute('aria-expanded', open);
+    const from = c.getBoundingClientRect().height;
+    if (open) { c.inert = false; c.removeAttribute('aria-hidden'); c.style.height = 'auto'; }
+    const to = open ? c.scrollHeight : 0;
+    c.style.height = from + 'px';
+    void c.offsetHeight;                       // force reflow so the transition runs
+    c.style.height = to + 'px';
+    if (open) { scrim.hidden = false; void scrim.offsetHeight; scrim.classList.add('is-visible'); }
+    else scrim.classList.remove('is-visible');
+    sheetAnimTimer = setTimeout(() => {        // settle (timer, not transitionend, so reduced-motion works)
+      if (state.sheetOpen) c.style.height = 'auto';
+      else { c.inert = true; c.setAttribute('aria-hidden', 'true'); scrim.hidden = true; }
+    }, SHEET_ANIM_MS + 20);
+  }
+
+  function renderSheetList() {
+    let html = '';
+    state.days.forEach((d, i) => {
+      const status = effStatus(i), items = effItems(i).filter(it => it.qty > 0);
+      if (status === 'empty') return;
+      html += `<p class="sheet-day">${esc(dayLong(d.date))}</p>`;
+      if (status === 'free') {
+        html += `<div class="sheet-item is-free"><div><p class="t">Drink-free day</p><p class="m">0 drinks · 0 units</p></div>
+          <button class="remove-btn" data-action="remove-free" data-i="${i}" aria-label="Clear drink-free day for ${esc(dayLong(d.date))}">${ICON.removeX()}</button></div>`;
+        return;
+      }
+      items.forEach(it => {
+        html += `<div class="sheet-item"><div><p class="t">${it.qty}x ${esc(it.name)}${it.custom ? '<span class="tag-custom">Custom</span>' : ''}</p>
+            <p class="m">${it.ml} ml · ${fmtNum(it.abv)}% · ${esc(catById(it.cat).name)} · ${fmtUnits(itemUnitsExact(it))} units</p></div>
+          <button class="remove-btn" data-action="remove" data-i="${i}" data-key="${esc(it.key)}" aria-label="Remove ${it.qty} ${esc(it.name)}">${ICON.removeX()}</button></div>`;
+      });
+    });
+    return html || `<p class="sheet-empty">No drinks logged yet.</p>`;
+  }
+
+  // Keep page content clear of the fixed sheet (collapsed height)
+  function measureSheet(el) {
+    requestAnimationFrame(() => {
+      const body = el.querySelector('.sheet-collapse');
+      const h = el.offsetHeight - (body ? body.offsetHeight : 0);
+      document.documentElement.style.setProperty('--sheet-h', h + 'px');
+    });
+  }
+
+  // ---------- Pop-ups ----------
+  function renderModal() {
+    const root = $('modalRoot');
+    const m = state.modal;
+    if (!m) { root.innerHTML = ''; return; }
+    if (m.type === 'confirm') {
+      root.innerHTML = `<div class="overlay" data-action="modal-backdrop"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+          <div class="popup-head"><h2 id="mTitle">${esc(m.title)}</h2><button class="x" data-action="modal-close" aria-label="Close">${ICON.close()}</button></div>
+          <p class="body-reg">${esc(m.body)}</p>
+          <div class="popup-actions">${m.cancelIsPrimary
+            // Safe choice is primary (e.g. leave dialog): [Leave] secondary on the left, [Stay] primary on the right
+            ? `<button class="bar-btn secondary" data-action="modal-confirm">${esc(m.confirm)}</button><button class="bar-btn primary" data-action="modal-close">${esc(m.cancel)}</button>`
+            : `<button class="bar-btn secondary" data-action="modal-close">${esc(m.cancel)}</button><button class="bar-btn primary" data-action="modal-confirm">${esc(m.confirm)}</button>`}</div>
+        </div></div>`;
+      return;
+    }
+    // Custom drink pop-up
+    const cat = catById(m.cat);
+    const tiles = cat.sizes.map(([sid, name, ml]) => sizeTile(sid, name, ml + 'ml', m.sizeId === sid)).join('') + sizeTile('other', 'Other', 'Custom', m.sizeId === 'other');
+    root.innerHTML = `<div class="overlay" data-action="modal-backdrop"><div class="popup" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+        <div class="popup-head"><h2 id="mTitle">Add custom ${esc(cat.name.toLowerCase())}</h2><button class="x" data-action="modal-close" aria-label="Close">${ICON.close()}</button></div>
+        <div class="field"><p class="field-label">Size</p><div class="size-grid" role="radiogroup" aria-label="Size">${tiles}</div>
+          ${m.sizeId === 'other' ? numeric('ml', m.ml, 'ml', 'Volume in millilitres') : ''}</div>
+        <div class="field"><p class="field-label">Strength (ABV)</p>${numeric('abv', m.abv, '%', 'Strength, percent ABV')}</div>
+        <div class="field"><p class="field-label">Quantity</p>${numeric('qty', m.qty, '', 'Quantity')}</div>
+        <div class="popup-actions"><button class="bar-btn primary" id="addCustomBtn" data-action="custom-add" ${customValid() ? '' : 'disabled'}>Add drink</button></div>
+      </div></div>`;
+  }
+  const sizeTile = (sid, name, sub, sel) =>
+    `<button class="size-tile ${sel ? 'is-selected' : ''}" role="radio" aria-checked="${sel}" data-action="custom-size" data-size="${sid}"><b>${esc(name)}</b><span>${esc(sub)}</span></button>`;
+  const numeric = (field, val, unit, label) =>
+    `<div class="numeric">
+       <button class="icon-btn icon-secondary" data-action="custom-step" data-field="${field}" data-dir="-1" aria-label="Decrease ${label}">${ICON.minusBtn(40)}</button>
+       <div class="val-wrap"><input type="number" inputmode="decimal" data-field="${field}" value="${val}" aria-label="${label}">${unit ? `<span class="unit">${unit}</span>` : ''}</div>
+       <button class="icon-btn icon-primary" data-action="custom-step" data-field="${field}" data-dir="1" aria-label="Increase ${label}">${ICON.plusBtn(40)}</button>
+     </div>`;
+
+  const CUSTOM_RULES = { ml: { step: 10, min: 0, max: 5000 }, abv: { step: 0.5, min: 0, max: 100 }, qty: { step: 1, min: 0, max: 99 } };
+  function customValid() {
+    const m = state.modal; if (!m || m.type !== 'custom') return false;
+    const ml = m.sizeId === 'other' ? m.ml : 1;
+    return m.qty >= 1 && ml > 0 && m.abv >= 0;
+  }
+
+  /* =====================================================================
+     8. ACTIONS
+     ===================================================================== */
+  function selectDay(i) {
+    if (i === state.selected) return;
+    goToDay(i, i > state.selected ? 'next' : 'prev');   // slide in the direction of travel
+  }
+
+  /* Change the selected day without redrawing the page: only the two affected calendar
+     cells and the day summary (between the calendar and the bottom sheet) are replaced.
+     `anim` is 'next' (slides in from the right) or 'prev' (from the left). */
+  function goToDay(i, anim) {
+    const n = state.days.length;
+    i = ((i % n) + n) % n;                               // wrap: last → first, first → last
+    if (i === state.selected) return;
+    const view = $('view');
+    const cal = view.querySelector('.calendar'), summary = view.querySelector('.day-summary');
+    const prev = state.selected;
+    state.selected = i;
+    if (!cal || !summary) { state.anim = anim; render(); return; }
+    [prev, i].forEach(k => {
+      const cell = cal.querySelector(`.day[data-i="${k}"]`);
+      if (cell) cell.outerHTML = renderDayCell(state.days[k], k);
+    });
+    summary.outerHTML = renderDaySummary();
+    const fresh = view.querySelector('.day-summary');
+    if (anim) fresh.classList.add('anim-' + anim);
+    if (state.submitError) { state.submitError = ''; renderSheet(); }
+  }
+
+  function openTrack() {
+    const i = state.selected;
+    state.draft = { dayIndex: i, items: state.days[i].items.map(it => Object.assign({}, it)) };
+    const first = state.draft.items[0];
+    state.activeCat = first ? first.cat : 'beer';
+    state.view = 'track'; state.sheetOpen = false; state.anim = 'push';
+    render(); window.scrollTo(0, 0);
+  }
+
+  function changeQty(key, delta) {
+    const items = state.draft.items;
+    let it = items.find(x => x.key === key);
+    if (!it && delta > 0 && key.startsWith('custom|')) {
+      const lib = state.customLibrary.find(c => c.key === key);
+      if (!lib) return;
+      it = Object.assign({}, lib, { qty: 0 });
+      items.push(it);
+    } else if (!it && delta > 0) {
+      const [catId, ...rest] = key.split('_');
+      const cat = catById(catId); const size = cat.sizes.find(s => s[0] === rest.join('_'));
+      it = { key, cat: cat.id, sizeId: size[0], name: size[1], ml: size[2], abv: cat.abv, qty: 0, custom: false };
+      items.push(it);
+    }
+    if (!it) return;
+    it.qty = Math.max(0, Math.min(99, it.qty + delta));
+    if (it.qty === 0) items.splice(items.indexOf(it), 1);   // zero = not logged
+    patchDrinkRow(key);   // update just this row …
+    renderSheet();        // … and the bottom sheet totals (no full page redraw)
+  }
+
+  function saveDraft() {
+    const d = state.days[state.draft.dayIndex];
+    const items = state.draft.items.filter(it => it.qty > 0);
+    d.items = items;
+    if (items.length) d.status = 'drinks';
+    else if (d.status === 'drinks') d.status = 'empty';
+    state.draft = null; state.view = 'main'; state.sheetOpen = false; state.anim = 'pop';
+    render();   // stay on the same day so the user sees what was logged
+    window.scrollTo(0, 0);
+  }
+
+  function cancelDraft() { state.draft = null; state.view = 'main'; state.sheetOpen = false; state.anim = 'pop'; render(); window.scrollTo(0, 0); }
+
+  function markFree(i) {
+    const d = state.days[i];
+    d.status = 'free'; d.items = [];
+    state.celebrate = i;            // play the "stamp of approval" once
+    render();   // stay on the same day so the user sees the result
+    state.celebrate = null;
+    try { if (navigator.vibrate) navigator.vibrate(25); } catch (e) { /* haptics are optional */ }
+  }
+
+  function removeFromSheet(i, key) {
+    if (state.draft && state.draft.dayIndex === i) {
+      state.draft.items = state.draft.items.filter(it => it.key !== key);
+      patchDrinkRow(key);   // row may be visible in the open panel
+      renderSheet();
+      return;
+    } else {
+      const d = state.days[i];
+      d.items = d.items.filter(it => it.key !== key);
+      if (!d.items.length && d.status === 'drinks') d.status = 'empty';
+    }
+    render();
+  }
+
+  function openCustom() {
+    const cat = catById(state.activeCat);
+    state.modal = { type: 'custom', cat: cat.id, sizeId: cat.sizes[0][0], ml: 0, abv: cat.abv, qty: 0 };
+    renderModal(); focusModal();
+  }
+
+  function addCustom() {
+    if (!customValid()) return;
+    const m = state.modal, cat = catById(m.cat);
+    const preset = cat.sizes.find(s => s[0] === m.sizeId);
+    const name = preset ? preset[1] : 'Other';
+    const ml = preset ? preset[2] : m.ml;
+    const abv = round1(m.abv);
+    const key = `custom|${cat.id}|${name}|${ml}|${abv}`;
+    const existing = state.draft.items.find(it => it.key === key);
+    if (existing) existing.qty = Math.min(99, existing.qty + m.qty);
+    else state.draft.items.push({ key, cat: cat.id, sizeId: preset ? preset[0] : 'other', name, ml, abv, qty: m.qty, custom: true });
+    rememberCustom({ key, cat: cat.id, sizeId: preset ? preset[0] : 'other', name, ml, abv, custom: true });
+    state.modal = null; render();
+  }
+
+  // Session memory of custom drinks: once created on any day, it is listed on every day
+  function rememberCustom(c) {
+    if (!state.customLibrary.some(x => x.key === c.key)) state.customLibrary.push({ key: c.key, cat: c.cat, sizeId: c.sizeId, name: c.name, ml: c.ml, abv: c.abv, custom: true });
+  }
+
+  function confirm(opts, onOk) { state.modal = Object.assign({ type: 'confirm', cancel: 'Cancel', confirm: 'Confirm' }, opts, { onOk }); renderModal(); focusModal(); }
+  function closeModal() { state.modal = null; renderModal(); }
+  function focusModal() { const b = document.querySelector('.popup button, .popup input'); if (b) b.focus({ preventScroll: true }); }
+
+  function closeActivity() {
+    if (state.submitting) return;   // don't interrupt a save in progress
+    if (state.submitted) return quit(true);
+    const anyLogged = state.days.some(d => d.status !== 'empty');
+    if (!anyLogged) return quit(false);
+    confirm({ title: 'Leave without submitting?', body: 'The days you have logged will not be saved.', cancel: 'Stay', confirm: 'Leave', cancelIsPrimary: true }, () => quit(false));
+  }
+
+  function quit(complete) {
+    if (hasQuit) return; hasQuit = true;
+    postToApp('QUIT', complete ? { completeState: 'COMPLETE' } : null);
+  }
+
+  /* =====================================================================
+     9. SUBMISSION — map questions & build responses
+     ===================================================================== */
+  const isNumberQ = q => /NUMBER/i.test(q.type || '');
+  const isTextQ = q => /TEXT_RESPONSE|SHORT_TEXT|LONG_TEXT/i.test(q.type || '');
+  const isContentQ = q => /TEXT_CONTENT/i.test(q.type || '');
+  const qLabel = q => String(q.label || q.name || '').trim().toLowerCase();
+
+  // Resolve question indices by Label; fall back to type + order.
+  function mapQuestions(questions, overrides) {
+    const L = Object.assign({}, QUESTION_LABELS, overrides || {});
+    const qs = (questions || []).map((q, index) => ({ q, index }));
+    const byLabel = l => qs.find(x => qLabel(x.q) === String(l).toLowerCase());
+    const numbers = qs.filter(x => isNumberQ(x.q));
+    const texts = qs.filter(x => isTextQ(x.q));
+    const multi = byLabel(L.drinksSelected) || qs.find(x => /MULTISELECT/i.test(x.q.type || ''));
+    const totalDrinks = byLabel(L.totalDrinks) || numbers[0];
+    const totalUnits = byLabel(L.totalUnits) || numbers.find(x => x !== totalDrinks);
+    const drinkFreeDays = byLabel(L.drinkFreeDays) || numbers.find(x => x !== totalDrinks && x !== totalUnits);
+    let dayQs = (L.days || []).map(byLabel);
+    if (dayQs.some(x => !x)) {   // fill gaps with remaining text questions in order
+      const used = new Set(dayQs.filter(Boolean));
+      const spare = texts.filter(x => !used.has(x));
+      dayQs = dayQs.map(x => x || spare.shift()).filter(Boolean);
+    }
+    // Heading / description: matched by Label; unlabelled TEXT_CONTENT blocks fill any gap in order
+    const spareContent = qs.filter(x => isContentQ(x.q) && ![L.heading, L.description].map(l => String(l).toLowerCase()).includes(qLabel(x.q)));
+    const heading = byLabel(L.heading) || spareContent.shift();
+    const description = byLabel(L.description) || spareContent.shift();
+    return { multi, totalDrinks, totalUnits, drinkFreeDays, dayQs, heading, description };
+  }
+
+  /* TEXT_CONTENT rich text → plain text lines.
+     Formatting is dropped (the template's own type styles are used); line breaks are kept.
+     DOMParser never runs scripts, and the result is escaped again when rendered. */
+  function contentLines(q) {
+    const raw = q && (q.text || q.body);
+    if (!raw || typeof raw !== 'string') return [];
+    const doc = new DOMParser().parseFromString(`<div>${raw}</div>`, 'text/html');
+    const root = doc.body.firstChild;
+    root.querySelectorAll('br').forEach(br => br.replaceWith('\n'));
+    root.querySelectorAll('p, div, h1, h2, h3, h4, h5, h6, li').forEach(el => el.append('\n'));   // each block ends a line
+    return root.textContent.split('\n').map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  }
+
+  // Heading block → one line (extra lines joined with a space); description block keeps its lines
+  function readIntro(qm) {
+    const h = contentLines(qm.heading && qm.heading.q);
+    const d = contentLines(qm.description && qm.description.q);
+    return {
+      heading: h.length ? h.join(' ') : DEFAULT_INTRO.heading,
+      description: d.length ? d.join('\n') : DEFAULT_INTRO.description
+    };
+  }
+
+  /* Day summary for the TEXT_RESPONSE. One "-" line per drink, ordered:
+       Drink type / Drink size / ABV% / Number logged / Total units (1 dp)
+     (the day itself is in the heading line, so it isn't repeated per drink)
+     e.g. - Pre-mixed cocktail / Small can 125ml / 6% / 1 qty / 0.8 units total
+          - Beer or ale (custom) / Other 200ml / 6.5% / 1 qty / 1.3 units total */
+  function daySummaryText(i) {
+    const d = state.days[i];
+    const u1 = n => round1(n).toFixed(1);                    // always 1 decimal place
+    const head = `Day ${i + 1} – ${dayLong(d.date)} ${d.date.getFullYear()}:`;
+    if (d.status === 'free') return `${head}\n- Drink-free day / 0 qty / 0.0 units total`;
+    // "/" is the field separator, so slashes inside names become "or" (e.g. Bottle/can → Bottle or can)
+    const clean = t => String(t).replace(/\s*\/\s*/g, ' or ');
+    const lines = d.items.map(it => [
+      `${clean(catById(it.cat).name)}${it.custom ? ' (custom)' : ''}`,
+      `${clean(it.name)} ${it.ml}ml`,
+      `${fmtNum(it.abv)}%`,
+      `${it.qty} qty`,
+      `${u1(itemUnitsExact(it))} units total`
+    ].join(' / '));
+    return `${head}\n${lines.map(l => '- ' + l).join('\n')}\nTotal: ${itemsQty(d.items)} drink${itemsQty(d.items) === 1 ? '' : 's'}, ${u1(itemsUnits(d.items))} units`;
+  }
+
+  function buildSubmission() {
+    const qm = state.questions;
+    const t = weekTotals();
+    const totalUnits = round1(t.units);
+    const duration = Math.round((Date.now() - startedAt) / 1000);
+    const responses = [];
+    const errors = [];
+
+    // MULTISELECT — every drink type logged this week
+    if (qm.multi) {
+      const opts = qm.multi.q.options || [];
+      const norm = s => String(s || '').toLowerCase().replace(/<[^>]*>/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+      const wanted = new Set();
+      state.days.forEach(d => d.items.forEach(it => {
+        const cat = catById(it.cat);
+        if (it.custom) wanted.add(`${it.cat}_custom|custom`);
+        else wanted.add(`${it.cat}_${it.sizeId}|${cat.name} ${it.name}`);
+      }));
+      const picked = [];
+      wanted.forEach(w => {
+        const [label, text] = w.split('|');
+        const o = opts.find(o => norm(o.label) === norm(label)) ||
+                  (label.endsWith('_custom') && opts.find(o => norm(o.label) === 'custom')) ||
+                  opts.find(o => norm(o.text) === norm(text));
+        if (o && !picked.includes(o)) picked.push(o);
+      });
+      if (!picked.length) { const none = opts.find(o => ['drink_free', 'none'].includes(String(o.label || '').toLowerCase())); if (none) picked.push(none); }
+      responses.push({ index: qm.multi.index, options: picked.map(o => ({ _id: o._id })), duration });
+    }
+
+    // NUMBER_RESPONSE — totals (value + text sent for compatibility)
+    if (qm.totalDrinks) responses.push({ index: qm.totalDrinks.index, value: t.qty, text: String(t.qty), duration });
+    else errors.push('total drinks (number) question');
+    if (qm.totalUnits) responses.push({ index: qm.totalUnits.index, value: totalUnits, text: totalUnits.toFixed(1), duration });
+    else errors.push('total units (number) question');
+    const freeDays = state.days.filter(d => d.status === 'free').length;
+    if (qm.drinkFreeDays) responses.push({ index: qm.drinkFreeDays.index, value: freeDays, text: String(freeDays), duration });
+    else errors.push('drink-free days (number) question');
+
+    // TEXT_CONTENT — heading + description viewed (no answer; keeps the container's question count complete)
+    [qm.heading, qm.description].forEach(x => { if (x) responses.push({ index: x.index, options: [], duration }); });
+
+    // TEXT_RESPONSE — one per day; extra days fold into the last available question
+    if (!qm.dayQs.length) errors.push('day summary (text) questions');
+    else {
+      const texts = state.days.map((_, i) => daySummaryText(i));
+      qm.dayQs.forEach((x, k) => {
+        const isLast = k === qm.dayQs.length - 1;
+        const text = isLast ? texts.slice(k).join('\n\n') : texts[k];
+        responses.push({ index: x.index, text, duration });
+      });
+    }
+    return { responses, errors, totals: { drinks: t.qty, units: totalUnits, drinkFreeDays: freeDays } };
+  }
+
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+  // Resolves once the container has acknowledged `n` saves, or after `maxMs`
+  function waitForAcks(n, maxMs) {
+    const start = ackCount;
+    return new Promise(resolve => {
+      const done = () => { ackWaiter = null; clearTimeout(t); resolve(); };
+      const t = setTimeout(done, maxMs);
+      ackWaiter = () => { if (ackCount - start >= n) done(); };
+    });
+  }
+
+  async function submit() {
+    if (!allLogged() || state.submitted || state.submitting) return;
+    let sub;
+    try { sub = buildSubmission(); } catch (e) { sub = { errors: ['an unexpected error (' + e.message + ')'] }; }
+    if (sub.errors && sub.errors.length) {
+      state.submitError = `We couldn't submit: this activity is missing its ${sub.errors.join(', ')}. Please contact the app admin.`;
+      postToApp('LOG', { error: state.submitError });
+      render(); return;
+    }
+    // Loading state: spinner on the button while responses are sent and saved
+    state.submitting = true; state.submitError = ''; state.sheetOpen = false;
+    renderSheet();
+    const acks = DEMO ? Promise.resolve() : waitForAcks(sub.responses.length, SUBMIT_ACK_MAX_MS);
+    sub.responses.forEach(r => postToApp('QUESTION_RESPONSE', r));
+    if (DEMO) console.log('[demo] submission payload', sub);
+    await Promise.all([delay(SUBMIT_MIN_MS), acks]);
+    state.submitting = false; state.submitted = true; state.view = 'success';
+    render(); window.scrollTo(0, 0);
+  }
+
+  /* =====================================================================
+     10. EVENTS (delegated)
+     ===================================================================== */
+  let suppressClick = false;
+  document.addEventListener('click', (e) => {
+    if (suppressClick) { suppressClick = false; e.preventDefault(); return; }
+    const el = e.target.closest('[data-action]');
+    if (!el || el.disabled) return;
+    const a = el.dataset.action;
+    const m = state.modal;
+    switch (a) {
+      case 'close': return closeActivity();
+      case 'select-day': return selectDay(+el.dataset.i);
+      case 'track': return openTrack();
+      case 'mark-free': {
+        const i = state.selected;
+        if (state.days[i].status === 'drinks') return confirm({ title: 'Mark as drink-free day?', body: `This will remove the drinks you logged for ${dayLong(state.days[i].date)}.` }, () => markFree(i));
+        return markFree(i);
+      }
+      case 'cat': state.activeCat = el.dataset.cat; return render();
+      case 'inc': return changeQty(el.dataset.key, 1);
+      case 'dec': return changeQty(el.dataset.key, -1);
+      case 'open-custom': return openCustom();
+      case 'back': return cancelDraft();
+      case 'save': return saveDraft();
+      case 'sheet-toggle': return setSheetOpen(!state.sheetOpen);
+      case 'sheet-close': return setSheetOpen(false);
+      case 'remove': return removeFromSheet(+el.dataset.i, el.dataset.key);
+      case 'remove-free': state.days[+el.dataset.i].status = 'empty'; return render();
+      case 'submit': return submit();
+      case 'continue': return quit(true);
+      case 'retry': return retryInit();
+      case 'modal-backdrop': if (e.target === el) closeModal(); return;
+      case 'modal-close': return closeModal();
+      case 'modal-confirm': { const ok = m && m.onOk; closeModal(); if (ok) ok(); return; }
+      case 'custom-size': m.sizeId = el.dataset.size; return renderModal();
+      case 'custom-step': {
+        const f = el.dataset.field, r = CUSTOM_RULES[f];
+        m[f] = clamp(round1((+m[f] || 0) + r.step * (+el.dataset.dir)), r.min, r.max);
+        return renderModal();
+      }
+      case 'custom-add': return addCustom();
+    }
+  });
+
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  // Typed values in the custom pop-up (no full re-render while typing)
+  document.addEventListener('input', (e) => {
+    const f = e.target.dataset && e.target.dataset.field;
+    if (!f || !state.modal) return;
+    const r = CUSTOM_RULES[f];
+    let v = parseFloat(e.target.value);
+    if (isNaN(v)) v = 0;
+    state.modal[f] = clamp(f === 'qty' ? Math.round(v) : v, r.min, r.max);
+    const btn = $('addCustomBtn'); if (btn) btn.disabled = !customValid();
+  });
+  // On commit, tidy the field in place (a re-render here would swallow the tap that caused the blur)
+  document.addEventListener('change', (e) => {
+    const f = e.target.dataset && e.target.dataset.field;
+    if (f && state.modal) e.target.value = state.modal[f];
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { if (state.modal) closeModal(); else if (state.sheetOpen) setSheetOpen(false); }
+    // ← / → also move between days on the main page (loops like the swipe)
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && state.view === 'main' && !state.modal && !state.sheetOpen && !(e.target instanceof HTMLInputElement)) {
+      e.preventDefault(); goToDay(state.selected + (e.key === 'ArrowRight' ? 1 : -1), e.key === 'ArrowRight' ? 'next' : 'prev');
+    }
+  });
+  // Block copy / context menu (text selection is disabled in CSS)
+  // iOS Safari only shows :active (pressed) styles when a touchstart listener is registered
+  document.addEventListener('touchstart', () => {}, { passive: true });
+
+  ['copy', 'cut', 'contextmenu'].forEach(ev => document.addEventListener(ev, e => { if (!(e.target instanceof HTMLInputElement)) e.preventDefault(); }));
+
+  // Carousel: native touch swipe + mouse drag on web
+  function bindCarouselDrag(el) {
+    let down = false, startX = 0, startLeft = 0, moved = false;
+    el.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') return; down = true; moved = false; startX = e.clientX; startLeft = el.scrollLeft; });
+    el.addEventListener('pointermove', e => {
+      if (!down) return;
+      const dx = e.clientX - startX;
+      if (Math.abs(dx) > 5) { moved = true; el.classList.add('is-dragging'); }
+      if (moved) el.scrollLeft = startLeft - dx;
+    });
+    const end = () => { if (!down) return; down = false; el.classList.remove('is-dragging'); if (moved) suppressClick = true; setTimeout(() => { suppressClick = false; }, 0); };
+    el.addEventListener('pointerup', end); el.addEventListener('pointerleave', end);
+  }
+
+  // Sheet: swipe up to expand, down to collapse
+  /* Main page: swipe left = next day, swipe right = previous day (loops at both ends).
+     Listens on the page area below the calendar (down to the bottom sheet, which sits on top);
+     only the day summary moves. Locks to an axis after a few px so vertical scrolling is unaffected. */
+  function bindDaySwipe() {
+    const view = $('view');
+    let x0 = null, y0 = 0, dx = 0, axis = null, pid = null, target = null;
+    const reset = el => { if (!el) return; el.style.transition = 'transform .2s ease, opacity .2s ease'; el.style.transform = ''; el.style.opacity = ''; };
+    view.addEventListener('pointerdown', e => {
+      if (state.view !== 'main' || state.modal || state.sheetOpen) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      const cal = view.querySelector('.calendar');
+      if (!cal || e.clientY < cal.getBoundingClientRect().bottom) return;   // calendar & above: not swipeable
+      x0 = e.clientX; y0 = e.clientY; dx = 0; axis = null; pid = e.pointerId;
+      target = view.querySelector('.day-summary');
+    });
+    view.addEventListener('pointermove', e => {
+      if (x0 === null || e.pointerId !== pid || !target) return;
+      const mx = e.clientX - x0, my = e.clientY - y0;
+      if (!axis) {
+        if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+        axis = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+        if (axis === 'x') { try { view.setPointerCapture(pid); } catch (err) { /* optional */ } }
+      }
+      if (axis !== 'x') return;
+      dx = mx;
+      target.style.transition = 'none';
+      target.style.transform = `translateX(${dx * 0.35}px)`;                 // follows the finger with resistance
+      target.style.opacity = String(1 - Math.min(Math.abs(dx) / 500, 0.35));
+    });
+    const end = (e, cancelled) => {
+      if (x0 === null || (e && e.pointerId !== pid)) return;
+      const horizontal = axis === 'x';
+      x0 = null; axis = null;
+      if (!horizontal) return;
+      suppressClick = true; setTimeout(() => { suppressClick = false; }, 0);   // a swipe is not a tap
+      if (!cancelled && Math.abs(dx) >= SWIPE_MIN_PX) goToDay(state.selected + (dx < 0 ? 1 : -1), dx < 0 ? 'next' : 'prev');
+      else reset(target);
+      target = null;
+    };
+    view.addEventListener('pointerup', e => end(e, false));
+    view.addEventListener('pointercancel', e => end(e, true));
+  }
+
+  function bindSheetSwipe(el) {
+    if (!el) return;
+    let y0 = null;
+    el.addEventListener('pointerdown', e => { y0 = e.clientY; });
+    el.addEventListener('pointerup', e => {
+      if (y0 === null) return;
+      const dy = e.clientY - y0; y0 = null;
+      if (Math.abs(dy) < 24) return;            // treat as a tap (handled by click)
+      suppressClick = true; setTimeout(() => { suppressClick = false; }, 0);
+      const open = dy < 0;
+      setSheetOpen(open);
+    });
+  }
+
+  /* =====================================================================
+     11. ERRORS & STARTUP
+     ===================================================================== */
+  function showFatal(title, detail, canRetry) {
+    $('skeleton').hidden = true;
+    $('sheet').hidden = true; $('scrim').hidden = true;
+    const v = $('view'); v.hidden = false;
+    v.innerHTML = `<div class="container"><div class="error-box" role="alert"><b>${esc(title)}</b>${esc(detail)}
+      ${canRetry ? '<button class="btn btn-primary" data-action="retry">Try again</button>' : ''}</div></div>`;
+  }
+
+  let initTimer = null;
+  function armInitTimeout() {
+    clearTimeout(initTimer);
+    initTimer = setTimeout(() => {
+      if (started) return;
+      const missing = REQUIRED.filter(k => init[k] === undefined);
+      postToApp('LOG', { error: 'Init timeout', missing });
+      showFatal('This activity could not load.', ' Please check your connection and try again.', true);
+    }, INIT_TIMEOUT_MS);
+  }
+  function retryInit() {
+    $('view').hidden = true; $('skeleton').hidden = false;
+    postToApp('READY_DYNAMIC_MEDIA'); armInitTimeout();
+  }
+
+  window.addEventListener('error', (e) => {
+    postToApp('LOG', { error: String(e.message || e) });
+    if (!started) showFatal('Something went wrong.', ' Please close the activity and try again.', false);
+  });
+
+  async function startTemplate() {
+    clearTimeout(initTimer);
+    try {
+      state.config = Object.assign({}, init.TEMPLATE_VARIATION && init.TEMPLATE_VARIATION.config, init.CONFIG || {});
+      state.questions = mapQuestions(init.QUESTIONS, state.config.questionLabels);
+      state.intro = readIntro(state.questions);
+      if (!DEMO) applyTheme(await loadTheme());
+      else applyTheme(DEMO.theme || {});
+      state.days = buildWeek();
+      if (DEMO && DEMO.prefill) DEMO.prefill(state, CATEGORIES);
+      state.days.forEach(d => d.items.forEach(it => { if (it.custom) rememberCustom(it); }));
+      $('skeleton').hidden = true;
+      $('view').hidden = false;
+      render();
+      const q = state.questions;
+      if (!q.totalDrinks || !q.totalUnits || !q.drinkFreeDays || !q.dayQs.length || !q.heading || !q.description) postToApp('LOG', { warning: 'Question setup incomplete', found: { heading: !!q.heading, description: !!q.description, multi: !!q.multi, totalDrinks: !!q.totalDrinks, totalUnits: !!q.totalUnits, drinkFreeDays: !!q.drinkFreeDays, dayQuestions: q.dayQs.length } });
+    } catch (e) {
+      postToApp('LOG', { error: e.message });
+      showFatal('This activity could not start.', ' ' + e.message, false);
+    }
+  }
+
+  console.info('Weekly drink tracker', TEMPLATE_VERSION);
+  bindDaySwipe();   // #view persists across renders, so the swipe is bound once
+
+  if (DEMO) {
+    // Demo: inject mock init data and render synchronously — no loading screen
+    Object.assign(init, DEMO.init);
+    started = true;
+    startTemplate();
+  } else {
+    window.addEventListener('load', () => { postToApp('READY_DYNAMIC_MEDIA'); armInitTimeout(); });
+  }
+})();
+</script>
+</body>
+</html>
